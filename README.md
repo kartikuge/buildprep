@@ -10,7 +10,7 @@ UPSC aspirants spend 8-12 months preparing across a massive syllabus using multi
 
 ## What This Is
 
-Not a content platform. The orchestration layer — plans what you study, when, and what happens when you fall behind, regardless of which resources you use.
+Not a content platform. The orchestration layer, plans what you study, when, and what happens when you fall behind, regardless of which resources you use.
 
 Category: Agentic AI. Core: Amazon Nova 2 Lite via Strands. Supporting: Nova Act.
 
@@ -25,12 +25,12 @@ Category: Agentic AI. Core: Amazon Nova 2 Lite via Strands. Supporting: Nova Act
 
 ## Tech Stack
 
-- AWS Strands (Amazon Nova 2 Lite on Bedrock) — plan generation and rebalancing
-- Nova Act — exam date fetching
-- React — frontend
-- DynamoDB — user profiles, plans, check-in history, learning profile cache
-- Cognito — auth
-- AWS Lambda / Amplify — hosting
+- AWS Strands (Amazon Nova 2 Lite on Bedrock) - plan generation and rebalancing
+- Nova Act - exam date fetching
+- React - frontend
+- DynamoDB - user profiles, plans, check-in history, learning profile cache
+- Cognito - auth
+- AWS Lambda / Amplify - hosting
 
 ## Status
 
