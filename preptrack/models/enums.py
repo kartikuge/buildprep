@@ -1,0 +1,89 @@
+from enum import Enum
+
+
+class Phase(str, Enum):
+    FOUNDATION = "FOUNDATION"
+    CONSOLIDATION = "CONSOLIDATION"
+    PRELIMS_SPRINT_75 = "PRELIMS_SPRINT_75"
+    MAINS_SPRINT_90 = "MAINS_SPRINT_90"
+    INTERVIEW = "INTERVIEW"
+
+
+class BlockCategory(str, Enum):
+    CORE_LEARNING = "CORE_LEARNING"
+    CORE_RETENTION = "CORE_RETENTION"
+    CORE_PATTERN = "CORE_PATTERN"
+    PERFORMANCE = "PERFORMANCE"
+    CORRECTIVE = "CORRECTIVE"
+    RETENTION = "RETENTION"
+    INPUT = "INPUT"
+    PROCESSING = "PROCESSING"
+    META = "META"
+
+
+class BlockType(str, Enum):
+    # Core Learning
+    DEEP_STUDY = "DEEP_STUDY"
+    STUDY_LIGHT = "STUDY_LIGHT"
+    STUDY_TECHNICAL = "STUDY_TECHNICAL"
+    # Core Retention
+    REVISION = "REVISION"
+    QUICK_RECALL = "QUICK_RECALL"
+    # Core Pattern
+    PYQ_ANALYSIS = "PYQ_ANALYSIS"
+    # Performance
+    TIMED_MCQ = "TIMED_MCQ"
+    TIMED_ANSWER_WRITING = "TIMED_ANSWER_WRITING"
+    CSAT_PRACTICE = "CSAT_PRACTICE"
+    ESSAY_BRAINSTORM = "ESSAY_BRAINSTORM"
+    ESSAY_FULL_SIM = "ESSAY_FULL_SIM"
+    FULL_MOCK = "FULL_MOCK"
+    INTERVIEW_SIM = "INTERVIEW_SIM"
+    # Corrective
+    ERROR_ANALYSIS = "ERROR_ANALYSIS"
+    WEAK_AREA_DRILL = "WEAK_AREA_DRILL"
+    # Retention
+    CONSOLIDATION_DAY = "CONSOLIDATION_DAY"
+    # Input
+    NEWS_READING = "NEWS_READING"
+    # Processing
+    CA_INTEGRATION = "CA_INTEGRATION"
+    NOTE_REFINEMENT = "NOTE_REFINEMENT"
+    # Meta
+    WEEKLY_REVIEW = "WEEKLY_REVIEW"
+
+
+class Subject(str, Enum):
+    HISTORY = "HISTORY"
+    ECONOMY = "ECONOMY"
+    POLITY = "POLITY"
+    ENVIRONMENT = "ENVIRONMENT"
+    GEOGRAPHY = "GEOGRAPHY"
+    SCI_TECH = "SCI_TECH"
+    ETHICS = "ETHICS"
+    ESSAY = "ESSAY"
+    OPTIONAL = "OPTIONAL"
+    CSAT = "CSAT"
+
+
+class MainsPaper(str, Enum):
+    GS1 = "GS1"
+    GS2 = "GS2"
+    GS3 = "GS3"
+    GS4 = "GS4"
+    ESSAY = "ESSAY"
+    OPTIONAL = "OPTIONAL"
+
+
+class CheckInStatus(str, Enum):
+    PENDING = "PENDING"
+    DONE = "DONE"
+    PARTIAL = "PARTIAL"
+    SKIPPED = "SKIPPED"
+    INACTIVE = "INACTIVE"
+
+
+class HeavyLevel(str, Enum):
+    NONE = "NONE"
+    HEAVY = "HEAVY"
+    ULTRA = "ULTRA"
