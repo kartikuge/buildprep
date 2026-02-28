@@ -91,6 +91,28 @@ def _call_llm(agent: Agent, user_prompt: str) -> WeeklyPlan | None:
     """
     try:
         result = agent(user_prompt)
+
+        # Extract metadata from AgentResult
+        stop_reason = getattr(result, "stop_reason", "unknown")
+        metrics = getattr(result, "metrics", None)
+        usage = getattr(metrics, "accumulated_usage", {})
+        input_tokens = usage.get("inputTokens", 0)
+        output_tokens = usage.get("outputTokens", 0)
+
+        acc_metrics = getattr(metrics, "accumulated_metrics", {})
+        latency = acc_metrics.get("latencyMs", "unknown")
+
+        logger.info(
+            "LLM Metadata | Stop Reason: %s | Tokens: In=%s, Out=%s | Latency: %sms",
+            stop_reason,
+            input_tokens,
+            output_tokens,
+            latency,
+        )
+
+        if stop_reason == "max_tokens":
+            logger.warning("LLM response truncated due to max_tokens limit.")
+
         raw_text = str(result)
         logger.debug("Raw LLM response (first 2000 chars):\n%.2000s", raw_text)
         json_str = _extract_json(raw_text)
@@ -244,6 +266,8 @@ def generate_plan(
 
         # Call LLM
         plan = _call_llm(agent, user_prompt)
+
+        logger.info(f"FUTURE DEBUG: LLM returned plan:\n{plan.model_dump_json(indent=2) if plan else 'Nothing returned by agent.'}")
 
         if plan is None:
             logger.warning("Attempt %d/%d: LLM returned unparseable output", attempt, MAX_RETRIES)
