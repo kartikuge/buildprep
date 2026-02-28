@@ -123,3 +123,104 @@ Reworked build order into 9 phases (A-I). Key decisions:
 - System prompt is static (agent personality/rules), user prompt is dynamic (built per request by app code)
 - Frontend stack: Vite, React+TS, Tailwind, shadcn/ui, Zustand, TanStack Query
 - DB strategy: local JSON first, DynamoDB later via storage abstraction
+
+---
+
+## Phase D Plan: Onboarding + Calendar UI (FastAPI + React)
+
+### Context
+
+Phases A-C complete. No HTTP layer, no frontend. Phase D adds FastAPI API + React frontend with onboarding and calendar view.
+
+### Architecture
+
+```
+Browser (Vite :5173)
+  ├─ Onboarding Wizard → POST /api/users/onboard
+  │     Creates UserProfile + TopicConfidence → generate_plan() → WeeklyPlan
+  └─ Calendar View → GET /api/users/{id}/plan?week_start=...
+        Renders 7-day grid of PlanCards
+
+FastAPI (:8080)
+  ├─ routes.py → deps.py (StorageBackend via DI)
+  │                 └─ DynamoLocalStorage (localhost:8000)
+  └─ routes.py → generate_plan() (Bedrock Nova 2 Lite)
+```
+
+### Key Decisions
+
+| Decision | Choice | Why |
+|---|---|---|
+| API port | 8080 | DynamoDB Local on 8000 |
+| Plan generation | Synchronous + loading spinner | Hackathon simplicity |
+| CORS | FastAPI CORSMiddleware → localhost:5173 | Standard local dev |
+| Routing | Conditional render (no React Router) | Only 2 views |
+| State persistence | Zustand + localStorage | Keep session on refresh |
+| FastAPI deps | Add to existing pyproject.toml | One project |
+
+### Part 1: FastAPI API Layer
+
+**Files:**
+- `preptrack/api/__init__.py` — empty
+- `preptrack/api/app.py` — FastAPI app + CORS
+- `preptrack/api/deps.py` — `get_storage()` → DynamoLocalStorage (lru_cache)
+- `preptrack/api/schemas.py` — OnboardRequest, OnboardResponse, GeneratePlanRequest
+- `preptrack/api/routes.py` — 4 endpoints
+- `tests/test_api.py` — mocked storage + agent
+
+**Endpoints:**
+
+| Endpoint | Method | What |
+|---|---|---|
+| `/api/users/onboard` | POST | Create profile + confidences, generate plan, return all |
+| `/api/users/{user_id}` | GET | Profile + confidences |
+| `/api/users/{user_id}/plan` | GET | WeeklyPlan for ?week_start= |
+| `/api/users/{user_id}/plan/generate` | POST | Trigger new plan generation |
+
+**pyproject.toml:** Add `fastapi>=0.115.0`, `uvicorn[standard]>=0.30.0`
+
+### Part 2: React Frontend
+
+**Scaffold:** `npm create vite@latest frontend -- --template react-ts` + Tailwind + shadcn/ui + Zustand + TanStack Query + date-fns
+
+**Onboarding (4 steps):**
+1. Name, stage (prelims/mains/both), optional subject
+2. Exam dates (based on stage)
+3. Hours per day (1-16)
+4. Confidence sliders per subject (1-5, step 0.5)
+
+Submit → POST /api/users/onboard → LoadingScreen (10-30s) → Calendar
+
+**Calendar:**
+- WeekView: 7-column CSS Grid (Mon-Sun), mobile stacks
+- DayColumn: date header + stacked PlanCardItems
+- PlanCardItem: subject badge (color by category), topic, duration, block type, fatigue dots
+- WeekNarrative: AI strategy explanation
+- WeekNavigation: prev/next week arrows
+
+**Colors:** CORE_LEARNING=blue, CORE_RETENTION=green, PERFORMANCE=purple, CORRECTIVE=red, INPUT=amber, META=gray
+
+### Build Order
+
+| Step | What | Est. |
+|------|------|------|
+| 1 | FastAPI skeleton (app, deps, schemas, routes) | ~1h |
+| 2 | API tests (test_api.py) | ~30m |
+| 3 | Vite + React scaffold + deps + types + store + API client | ~1h |
+| 4 | Onboarding wizard (4 steps + loading screen) | ~2-3h |
+| 5 | Calendar view (week grid + cards + narrative + navigation) | ~2-3h |
+| 6 | Polish (loading skeletons, error states, mobile) | ~1h |
+
+### Verification
+
+```bash
+# Backend tests
+pytest tests/test_api.py -v
+pytest tests/ -v -m "not integration"
+
+# End-to-end (3 terminals)
+# T1: java -Djava.library.path=./DynamoDBLocal_lib -jar DynamoDBLocal.jar -sharedDb
+# T2: uvicorn preptrack.api.app:app --reload --port 8080
+# T3: cd frontend && npm run dev
+# Open http://localhost:5173
+```
