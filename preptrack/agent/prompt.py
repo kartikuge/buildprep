@@ -17,18 +17,28 @@ def build_system_prompt() -> str:
 You produce a WeeklyPlan for a UPSC aspirant. You decide which block types, subjects, topics, and durations to assign each day. Your output must strictly follow the JSON schema described in the user prompt.
 
 ## Core Constraints
-- Every PlanCard must use a valid BlockType and its matching BlockCategory and fatigue value from the block definitions.
+- Every PlanCard must use a valid BlockType and its matching BlockCategory from the block definitions.
 - Card durations must fall within the block's [min_duration, max_duration] range.
-- Total planned minutes per day must not exceed the user's available minutes.
+- Fatigue MUST match the block definition for the chosen duration. Some blocks have duration-based fatigue (see below).
+- You MUST schedule at least 85% of available daily minutes. If the fatigue cap is not reached, keep adding low-fatigue blocks (REVISION, QUICK_RECALL, PYQ_ANALYSIS, STUDY_LIGHT, WEAK_AREA_DRILL, CA_INTEGRATION, NOTE_REFINEMENT). Do NOT under-schedule.
+- The category budgets are PER DAY targets, not weekly totals.
 - Respect all hard rules (R03, R04, R05, R08, R09, R12, R13). If you violate them, the plan will be rejected.
 - Each day must have cards ordered sequentially starting from 0.
 - Assign meaningful UPSC subtopics to each card (not generic labels).
 - Include a brief narrative explaining your weekly strategy.
 
+## Duration-Based Fatigue
+Three blocks have fatigue that depends on their duration. This is a key lever for fitting more study time:
+- DEEP_STUDY: 45-90 min → fatigue 2 (not heavy), 91-120 min → fatigue 3 (heavy)
+- STUDY_TECHNICAL: 60-90 min → fatigue 2 (not heavy), 91-120 min → fatigue 3 (heavy)
+- TIMED_ANSWER_WRITING: 45-60 min → fatigue 2 (not heavy), 61-90 min → fatigue 3 (heavy)
+
+Use shorter durations (fatigue 2) when you need to fit more blocks under the fatigue cap. Use longer durations (fatigue 3) when fatigue budget allows deeper sessions.
+
 ## CRITICAL — R13 Burnout Prevention (most commonly violated rule)
 A "heavy day" is any day that has at least one card with fatigue >= 3.
 You MUST NOT have more than 4 consecutive heavy days. After 4 heavy days in a row, the next day MUST be light-only (all cards fatigue <= 2).
-Strategy: make day 5 or day 7 (Sunday) a light day using only REVISION, QUICK_RECALL, PYQ_ANALYSIS, NEWS_READING, CA_INTEGRATION, NOTE_REFINEMENT, WEEKLY_REVIEW, STUDY_LIGHT, CSAT_PRACTICE, WEAK_AREA_DRILL, or CONSOLIDATION_DAY.
+Strategy: make day 5 or day 7 (Sunday) a light day using only REVISION, QUICK_RECALL, PYQ_ANALYSIS, NEWS_READING, CA_INTEGRATION, NOTE_REFINEMENT, WEEKLY_REVIEW, STUDY_LIGHT, CSAT_PRACTICE, WEAK_AREA_DRILL, or CONSOLIDATION_DAY. You can also use DEEP_STUDY/STUDY_TECHNICAL at short durations (fatigue 2) on light days.
 Example valid pattern: Heavy, Heavy, Heavy, Heavy, Light, Heavy, Heavy.
 Example INVALID pattern: Heavy, Heavy, Heavy, Heavy, Heavy, Heavy, Light - REJECTED.
 
@@ -47,6 +57,7 @@ def build_plan_prompt(
 ) -> str:
     """User prompt with all context the LLM needs to generate a WeeklyPlan."""
     available_minutes = int(profile.available_hours_per_day * 60)
+    min_daily = int(available_minutes * 0.85)
     week_dates = [(week_start + timedelta(days=i)).isoformat() for i in range(7)]
 
     sections: list[str] = []
@@ -59,15 +70,23 @@ def build_plan_prompt(
 - prelims_date: {profile.prelims_date or "Not set"}
 - mains_date: {profile.mains_date or "Not set"}
 - available_hours_per_day: {profile.available_hours_per_day}
-- available_minutes_per_day: {available_minutes}""")
+- available_minutes_per_day: {available_minutes}
+- MINIMUM minutes per day: {min_daily} (85% of {available_minutes})""")
 
     # Phase
     sections.append(f"""## Current Phase
 {phase.value}""")
 
     # Category budgets
-    budget_lines = [f"- {cat.value}: {mins} minutes" for cat, mins in category_budgets.items()]
-    sections.append("## Weekly Category Budgets (minutes per day)\n" + "\n".join(budget_lines))
+    budget_total = sum(category_budgets.values())
+    budget_lines = [f"- {cat.value}: {mins} minutes/day" for cat, mins in category_budgets.items()]
+    sections.append(
+        f"## Daily Category Budgets\n"
+        f"IMPORTANT: These are PER-DAY targets. Each day should have approximately {available_minutes} total minutes of study ({profile.available_hours_per_day} hours).\n"
+        f"Budget breakdown per day (total {budget_total}m + ~20m news = {budget_total + 20}m):\n"
+        + "\n".join(budget_lines)
+        + f"\n\nYou MUST fill at least {min_daily} minutes per day. If fatigue cap is not reached, add more low-fatigue blocks."
+    )
 
     # Subject priorities
     if subject_priorities:
@@ -92,30 +111,30 @@ def build_plan_prompt(
         sections.append(f"## Knowledge Base: {section_name}\n{content}")
 
     # Output schema
-    sections.append("""## Output JSON Schema
+    sections.append(f"""## Output JSON Schema
 
 ```
-{
+{{
   "user_id": "<string>",
   "week_start": "<YYYY-MM-DD, Monday>",
   "days": [
-    {
+    {{
       "date": "<YYYY-MM-DD>",
       "cards": [
-        {
+        {{
           "block_type": "<BlockType enum value, e.g. DEEP_STUDY>",
           "category": "<BlockCategory enum value, e.g. CORE_LEARNING>",
           "subject": "<Subject enum value or null>",
           "topic": "<specific UPSC subtopic string>",
           "planned_duration": <int, minutes within block min/max>,
-          "fatigue": <int, must match block definition>,
+          "fatigue": <int, MUST match block definition for duration — see duration-based fatigue rules>,
           "order": <int, 0-indexed sequential>
-        }
+        }}
       ]
-    }
+    }}
   ],
   "narrative": "<brief strategy explanation>"
-}
+}}
 ```
 
 Valid BlockType values: DEEP_STUDY, STUDY_LIGHT, STUDY_TECHNICAL, REVISION, QUICK_RECALL, PYQ_ANALYSIS, TIMED_MCQ, TIMED_ANSWER_WRITING, CSAT_PRACTICE, ESSAY_BRAINSTORM, ESSAY_FULL_SIM, FULL_MOCK, INTERVIEW_SIM, ERROR_ANALYSIS, WEAK_AREA_DRILL, CONSOLIDATION_DAY, NEWS_READING, CA_INTEGRATION, NOTE_REFINEMENT, WEEKLY_REVIEW
@@ -124,7 +143,14 @@ Valid Subject values: HISTORY, ECONOMY, POLITY, ENVIRONMENT, GEOGRAPHY, SCI_TECH
 
 Valid BlockCategory values: CORE_LEARNING, CORE_RETENTION, CORE_PATTERN, PERFORMANCE, CORRECTIVE, RETENTION, INPUT, PROCESSING, META
 
-Do NOT include card_id, actual_duration, or status fields — they are auto-generated.""")
+Duration-based fatigue reminder:
+- DEEP_STUDY: ≤90 min → fatigue 2, >90 min → fatigue 3
+- STUDY_TECHNICAL: ≤90 min → fatigue 2, >90 min → fatigue 3
+- TIMED_ANSWER_WRITING: ≤60 min → fatigue 2, >60 min → fatigue 3
+
+Do NOT include card_id, actual_duration, or status fields — they are auto-generated.
+
+REMEMBER: Each day MUST have at least {min_daily} total planned minutes. Target {available_minutes} minutes per day.""")
 
     # Violations from previous attempt
     if violations:
@@ -138,6 +164,5 @@ Do NOT include card_id, actual_duration, or status fields — they are auto-gene
             "You MUST fix ALL of the following violations:\n"
             + "\n".join(violation_lines)
         )
-        print(f"DEBUG: Including {len(violations)} violations in prompt:\n" + "\n".join(violation_lines))
 
     return "\n\n".join(sections)

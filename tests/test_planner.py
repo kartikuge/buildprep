@@ -517,8 +517,8 @@ class TestRepairR13:
         for day in plan.days[:4]:
             day.cards.append(
                 PlanCard(
-                    block_type=BlockType.DEEP_STUDY,
-                    category=BlockCategory.CORE_LEARNING,
+                    block_type=BlockType.TIMED_MCQ,
+                    category=BlockCategory.PERFORMANCE,
                     subject=Subject.HISTORY,
                     topic="Test Heavy",
                     planned_duration=60,
@@ -539,8 +539,8 @@ class TestRepairR13:
         for day in plan.days[:5]:
             day.cards.append(
                 PlanCard(
-                    block_type=BlockType.DEEP_STUDY,
-                    category=BlockCategory.CORE_LEARNING,
+                    block_type=BlockType.TIMED_MCQ,
+                    category=BlockCategory.PERFORMANCE,
                     subject=Subject.HISTORY,
                     topic="Test Heavy",
                     planned_duration=60,
@@ -560,8 +560,8 @@ class TestRepairR13:
         for day in plan.days:
             day.cards.append(
                 PlanCard(
-                    block_type=BlockType.DEEP_STUDY,
-                    category=BlockCategory.CORE_LEARNING,
+                    block_type=BlockType.TIMED_MCQ,
+                    category=BlockCategory.PERFORMANCE,
                     subject=Subject.HISTORY,
                     topic="Test Heavy",
                     planned_duration=60,
@@ -586,8 +586,8 @@ class TestRepairR13:
         for day in plan.days[:5]:
             day.cards.append(
                 PlanCard(
-                    block_type=BlockType.DEEP_STUDY,
-                    category=BlockCategory.CORE_LEARNING,
+                    block_type=BlockType.TIMED_MCQ,
+                    category=BlockCategory.PERFORMANCE,
                     subject=Subject.ECONOMY,
                     topic="Fiscal Policy",
                     planned_duration=60,

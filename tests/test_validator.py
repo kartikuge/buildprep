@@ -71,7 +71,7 @@ class TestR04ConsolidationDay:
     def test_consolidation_day_with_heavy_fails(self):
         day = make_daily(MON, [
             make_card(BlockType.CONSOLIDATION_DAY, BlockCategory.RETENTION, fatigue=1, duration=180),
-            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, fatigue=3, duration=90),
+            make_card(BlockType.TIMED_MCQ, BlockCategory.PERFORMANCE, fatigue=3, duration=60),
         ])
         plan = make_weekly("test", MON, [day])
         result = validate_weekly_plan(plan, _user(), Phase.PRELIMS_SPRINT_75)
@@ -93,7 +93,7 @@ class TestR05FullMockIsolation:
     def test_mock_with_heavy_fails(self):
         day = make_daily(MON, [
             make_card(BlockType.FULL_MOCK, BlockCategory.PERFORMANCE, fatigue=4, duration=120),
-            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, fatigue=3, duration=90),
+            make_card(BlockType.TIMED_MCQ, BlockCategory.PERFORMANCE, fatigue=3, duration=60),
         ])
         plan = make_weekly("test", MON, [day])
         result = validate_weekly_plan(plan, _user(), Phase.FOUNDATION)
@@ -132,7 +132,7 @@ class TestR08DailyFatigueCap:
             make_card(fatigue=1, duration=30),
         ])
         plan = make_weekly("test", MON, [day])
-        # 6 hrs × 2 = 12 cap; fatigue = 10 → pass
+        # 6 hrs x 2 = 12 cap; fatigue = 10 -> pass
         result = validate_weekly_plan(plan, _user(6.0), Phase.FOUNDATION)
         r08 = [v for v in result.violations if v.rule_id == "R08"]
         assert len(r08) == 0
@@ -145,7 +145,7 @@ class TestR08DailyFatigueCap:
             make_card(fatigue=3, duration=30),
         ])
         plan = make_weekly("test", MON, [day])
-        # 3 hrs × 2 = 6 cap; fatigue = 14 → fail
+        # 3 hrs x 2 = 6 cap; fatigue = 14 -> fail
         result = validate_weekly_plan(plan, _user(3.0), Phase.FOUNDATION)
         r08 = [v for v in result.violations if v.rule_id == "R08"]
         assert len(r08) == 1
@@ -154,8 +154,8 @@ class TestR08DailyFatigueCap:
 class TestR09TopicDiversity:
     def test_two_cl_subjects_passes(self):
         day = make_daily(MON, [
-            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.HISTORY, fatigue=3, duration=90),
-            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.ECONOMY, fatigue=3, duration=90),
+            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.HISTORY, fatigue=2, duration=90),
+            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.ECONOMY, fatigue=2, duration=90),
         ])
         plan = make_weekly("test", MON, [day])
         result = validate_weekly_plan(plan, _user(), Phase.FOUNDATION)
@@ -164,9 +164,9 @@ class TestR09TopicDiversity:
 
     def test_three_cl_subjects_fails(self):
         day = make_daily(MON, [
-            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.HISTORY, fatigue=3, duration=60),
-            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.ECONOMY, fatigue=3, duration=60),
-            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.POLITY, fatigue=3, duration=60),
+            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.HISTORY, fatigue=2, duration=60),
+            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.ECONOMY, fatigue=2, duration=60),
+            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.POLITY, fatigue=2, duration=60),
         ])
         plan = make_weekly("test", MON, [day])
         result = validate_weekly_plan(plan, _user(), Phase.FOUNDATION)
@@ -267,7 +267,7 @@ class TestValidPlan:
         """A well-formed plan should pass all validators."""
         days = [
             make_daily(MON, [
-                make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.HISTORY, fatigue=3, duration=90),
+                make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.HISTORY, fatigue=2, duration=90),
                 make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.ECONOMY, fatigue=1, duration=45),
                 make_card(BlockType.QUICK_RECALL, BlockCategory.CORE_RETENTION, Subject.POLITY, fatigue=1, duration=20),
             ]),

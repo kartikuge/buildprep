@@ -81,7 +81,7 @@ class TestStorageRoundTrips:
                             subject=Subject.HISTORY,
                             topic="Parliament",
                             planned_duration=90,
-                            fatigue=3,
+                            fatigue=2,
                             order=0,
                         )
                     ],

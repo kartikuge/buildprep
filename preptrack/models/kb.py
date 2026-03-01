@@ -14,11 +14,19 @@ class BlockDefinition(BaseModel):
     block_type: BlockType
     category: BlockCategory
     fatigue: int = Field(ge=1, le=4)
+    fatigue_high: int | None = None
+    fatigue_threshold: int | None = None
     heavy: HeavyLevel = HeavyLevel.NONE
     min_duration: int = Field(ge=15)
     max_duration: int = Field(ge=15)
     max_per_week: int = Field(ge=1)
     notes: str = ""
+
+    def fatigue_for_duration(self, duration: int) -> int:
+        """Return the correct fatigue value for a given duration."""
+        if self.fatigue_threshold is not None and self.fatigue_high is not None:
+            return self.fatigue_high if duration > self.fatigue_threshold else self.fatigue
+        return self.fatigue
 
 
 class CategoryAllocation(BaseModel):

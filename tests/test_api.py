@@ -75,7 +75,7 @@ def _make_fixture_plan(user_id: str, week_start: date) -> WeeklyPlan:
         subject=Subject.HISTORY,
         topic="Ancient India",
         planned_duration=90,
-        fatigue=3,
+        fatigue=2,
         order=0,
     )
     day = DailyPlan(date=week_start, cards=[card])
