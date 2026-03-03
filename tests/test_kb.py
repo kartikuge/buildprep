@@ -70,9 +70,9 @@ class TestConfidenceConfig:
 
 
 class TestRules:
-    def test_has_19_rules(self):
-        # R01-R17, R19, R20 (no R18)
-        assert len(RULES) == 19
+    def test_has_21_rules(self):
+        # R01-R17, R19-R22 (no R18)
+        assert len(RULES) == 21
 
     def test_all_rule_types_valid(self):
         valid_types = {"hard", "medium", "low", "deferred"}

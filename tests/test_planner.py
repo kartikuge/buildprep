@@ -11,6 +11,7 @@ from preptrack.agent.planner import (
     MAX_RETRIES,
     _call_llm,
     _compute_context,
+    _correct_fatigue,
     _extract_json,
     _next_monday,
     _repair_r13,
@@ -621,3 +622,170 @@ class TestRepairR13:
         repaired_card = repaired.days[4].cards[2]
         assert repaired_card.block_type == BlockType.PYQ_ANALYSIS
         assert repaired_card.fatigue <= 2
+
+
+# ── _correct_fatigue Tests ─────────────────────────────────────────
+
+
+class TestCorrectFatigue:
+    def test_deep_study_90min_corrected_to_fatigue_2(self):
+        """DEEP_STUDY at 90 min should be fatigue 2, not 3."""
+        week_start = date(2026, 3, 2)
+        plan = WeeklyPlan(
+            user_id="test",
+            week_start=week_start,
+            days=[
+                DailyPlan(
+                    date=week_start,
+                    cards=[
+                        PlanCard(
+                            block_type=BlockType.DEEP_STUDY,
+                            category=BlockCategory.CORE_LEARNING,
+                            subject=Subject.ECONOMY,
+                            topic="Indian Economic Development",
+                            planned_duration=90,
+                            fatigue=3,  # LLM got this wrong
+                            order=0,
+                        ),
+                    ],
+                )
+            ],
+            narrative="Test",
+        )
+        corrected = _correct_fatigue(plan)
+        assert corrected.days[0].cards[0].fatigue == 2
+
+    def test_deep_study_91min_stays_fatigue_3(self):
+        """DEEP_STUDY at 91 min should remain fatigue 3."""
+        week_start = date(2026, 3, 2)
+        plan = WeeklyPlan(
+            user_id="test",
+            week_start=week_start,
+            days=[
+                DailyPlan(
+                    date=week_start,
+                    cards=[
+                        PlanCard(
+                            block_type=BlockType.DEEP_STUDY,
+                            category=BlockCategory.CORE_LEARNING,
+                            subject=Subject.HISTORY,
+                            topic="Ancient India",
+                            planned_duration=91,
+                            fatigue=3,
+                            order=0,
+                        ),
+                    ],
+                )
+            ],
+            narrative="Test",
+        )
+        corrected = _correct_fatigue(plan)
+        assert corrected.days[0].cards[0].fatigue == 3
+
+    def test_study_technical_90min_corrected(self):
+        """STUDY_TECHNICAL at 90 min → fatigue 2."""
+        week_start = date(2026, 3, 2)
+        plan = WeeklyPlan(
+            user_id="test",
+            week_start=week_start,
+            days=[
+                DailyPlan(
+                    date=week_start,
+                    cards=[
+                        PlanCard(
+                            block_type=BlockType.STUDY_TECHNICAL,
+                            category=BlockCategory.CORE_LEARNING,
+                            subject=Subject.POLITY,
+                            topic="Constitutional Amendments",
+                            planned_duration=90,
+                            fatigue=3,  # wrong
+                            order=0,
+                        ),
+                    ],
+                )
+            ],
+            narrative="Test",
+        )
+        corrected = _correct_fatigue(plan)
+        assert corrected.days[0].cards[0].fatigue == 2
+
+    def test_answer_writing_60min_corrected(self):
+        """TIMED_ANSWER_WRITING at 60 min → fatigue 2."""
+        week_start = date(2026, 3, 2)
+        plan = WeeklyPlan(
+            user_id="test",
+            week_start=week_start,
+            days=[
+                DailyPlan(
+                    date=week_start,
+                    cards=[
+                        PlanCard(
+                            block_type=BlockType.TIMED_ANSWER_WRITING,
+                            category=BlockCategory.PERFORMANCE,
+                            subject=Subject.HISTORY,
+                            topic="Revolt of 1857",
+                            planned_duration=60,
+                            fatigue=3,  # wrong
+                            order=0,
+                        ),
+                    ],
+                )
+            ],
+            narrative="Test",
+        )
+        corrected = _correct_fatigue(plan)
+        assert corrected.days[0].cards[0].fatigue == 2
+
+    def test_news_reading_corrected_to_zero(self):
+        """NEWS_READING should be fatigue 0."""
+        week_start = date(2026, 3, 2)
+        plan = WeeklyPlan(
+            user_id="test",
+            week_start=week_start,
+            days=[
+                DailyPlan(
+                    date=week_start,
+                    cards=[
+                        PlanCard(
+                            block_type=BlockType.NEWS_READING,
+                            category=BlockCategory.INPUT,
+                            subject=None,
+                            topic="Daily news",
+                            planned_duration=20,
+                            fatigue=1,  # LLM might still output 1
+                            order=0,
+                        ),
+                    ],
+                )
+            ],
+            narrative="Test",
+        )
+        corrected = _correct_fatigue(plan)
+        assert corrected.days[0].cards[0].fatigue == 0
+
+    def test_correct_fatigue_unchanged(self):
+        """Cards with already-correct fatigue are not modified."""
+        week_start = date(2026, 3, 2)
+        plan = WeeklyPlan(
+            user_id="test",
+            week_start=week_start,
+            days=[
+                DailyPlan(
+                    date=week_start,
+                    cards=[
+                        PlanCard(
+                            block_type=BlockType.REVISION,
+                            category=BlockCategory.CORE_RETENTION,
+                            subject=Subject.HISTORY,
+                            topic="Test",
+                            planned_duration=45,
+                            fatigue=1,
+                            order=0,
+                        ),
+                    ],
+                )
+            ],
+            narrative="Test",
+        )
+        corrected = _correct_fatigue(plan)
+        assert corrected.days[0].cards[0].fatigue == 1

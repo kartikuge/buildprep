@@ -162,7 +162,7 @@ class TestR09TopicDiversity:
         r09 = [v for v in result.violations if v.rule_id == "R09"]
         assert len(r09) == 0
 
-    def test_three_cl_subjects_fails(self):
+    def test_three_cl_subjects_fails_for_low_hours(self):
         day = make_daily(MON, [
             make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.HISTORY, fatigue=2, duration=60),
             make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.ECONOMY, fatigue=2, duration=60),
@@ -170,6 +170,29 @@ class TestR09TopicDiversity:
         ])
         plan = make_weekly("test", MON, [day])
         result = validate_weekly_plan(plan, _user(), Phase.FOUNDATION)
+        r09 = [v for v in result.violations if v.rule_id == "R09"]
+        assert len(r09) == 1
+
+    def test_three_cl_subjects_passes_for_8h_user(self):
+        day = make_daily(MON, [
+            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.HISTORY, fatigue=2, duration=90),
+            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.ECONOMY, fatigue=2, duration=90),
+            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.POLITY, fatigue=2, duration=60),
+        ])
+        plan = make_weekly("test", MON, [day])
+        result = validate_weekly_plan(plan, _user(8.0), Phase.FOUNDATION)
+        r09 = [v for v in result.violations if v.rule_id == "R09"]
+        assert len(r09) == 0
+
+    def test_four_cl_subjects_fails_for_8h_user(self):
+        day = make_daily(MON, [
+            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.HISTORY, fatigue=2, duration=60),
+            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.ECONOMY, fatigue=2, duration=60),
+            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.POLITY, fatigue=2, duration=60),
+            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.GEOGRAPHY, fatigue=2, duration=60),
+        ])
+        plan = make_weekly("test", MON, [day])
+        result = validate_weekly_plan(plan, _user(8.0), Phase.FOUNDATION)
         r09 = [v for v in result.violations if v.rule_id == "R09"]
         assert len(r09) == 1
 
@@ -184,6 +207,66 @@ class TestR09TopicDiversity:
         result = validate_weekly_plan(plan, _user(), Phase.FOUNDATION)
         r09 = [v for v in result.violations if v.rule_id == "R09"]
         assert len(r09) == 0
+
+    def test_five_cr_subjects_warning_for_low_hours_light_day(self):
+        """5 CR subjects on a light day (all fatigue ≤ 2) → warning, plan still valid."""
+        day = make_daily(MON, [
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.HISTORY, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.ECONOMY, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.POLITY, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.GEOGRAPHY, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.ENVIRONMENT, fatigue=1, duration=30),
+        ])
+        plan = make_weekly("test", MON, [day])
+        result = validate_weekly_plan(plan, _user(6.0), Phase.FOUNDATION)
+        r09 = [v for v in result.violations if v.rule_id == "R09"]
+        assert len(r09) == 1
+        assert r09[0].severity == "warning"
+        assert result.valid  # warnings don't block validation
+
+    def test_five_cr_subjects_error_for_low_hours_heavy_day(self):
+        """5 CR subjects on a heavy day (has fatigue 3 block) → error, plan invalid."""
+        day = make_daily(MON, [
+            make_card(BlockType.DEEP_STUDY, BlockCategory.CORE_LEARNING, Subject.HISTORY, fatigue=3, duration=120),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.HISTORY, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.ECONOMY, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.POLITY, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.GEOGRAPHY, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.ENVIRONMENT, fatigue=1, duration=30),
+        ])
+        plan = make_weekly("test", MON, [day])
+        result = validate_weekly_plan(plan, _user(6.0), Phase.FOUNDATION)
+        r09 = [v for v in result.violations if v.rule_id == "R09"]
+        assert len(r09) == 1
+        assert r09[0].severity == "error"
+        assert not result.valid
+
+    def test_five_cr_subjects_passes_for_8h_user(self):
+        day = make_daily(MON, [
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.HISTORY, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.ECONOMY, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.POLITY, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.GEOGRAPHY, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.ENVIRONMENT, fatigue=1, duration=30),
+        ])
+        plan = make_weekly("test", MON, [day])
+        result = validate_weekly_plan(plan, _user(8.0), Phase.FOUNDATION)
+        r09 = [v for v in result.violations if v.rule_id == "R09"]
+        assert len(r09) == 0
+
+    def test_six_cr_subjects_fails_for_8h_user(self):
+        day = make_daily(MON, [
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.HISTORY, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.ECONOMY, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.POLITY, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.GEOGRAPHY, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.ENVIRONMENT, fatigue=1, duration=30),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.SCI_TECH, fatigue=1, duration=30),
+        ])
+        plan = make_weekly("test", MON, [day])
+        result = validate_weekly_plan(plan, _user(8.0), Phase.FOUNDATION)
+        r09 = [v for v in result.violations if v.rule_id == "R09"]
+        assert len(r09) == 1
 
 
 class TestR12WorkingProfessionalGuard:
@@ -260,6 +343,61 @@ class TestR13BurnoutPrevention:
         result = validate_weekly_plan(plan, _user(), Phase.FOUNDATION)
         r13 = [v for v in result.violations if v.rule_id == "R13"]
         assert len(r13) == 0
+
+
+class TestR21CAIntegrationFrequency:
+    def test_one_ca_per_week_passes(self):
+        day = make_daily(MON, [
+            make_card(BlockType.CA_INTEGRATION, BlockCategory.PROCESSING, fatigue=1, duration=45),
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, fatigue=1, duration=45),
+        ])
+        plan = make_weekly("test", MON, [day])
+        result = validate_weekly_plan(plan, _user(), Phase.FOUNDATION)
+        r21 = [v for v in result.violations if v.rule_id == "R21"]
+        assert len(r21) == 0
+
+    def test_two_ca_same_day_fails(self):
+        day = make_daily(MON, [
+            make_card(BlockType.CA_INTEGRATION, BlockCategory.PROCESSING, fatigue=1, duration=30),
+            make_card(BlockType.CA_INTEGRATION, BlockCategory.PROCESSING, fatigue=1, duration=30),
+        ])
+        plan = make_weekly("test", MON, [day])
+        result = validate_weekly_plan(plan, _user(), Phase.FOUNDATION)
+        r21 = [v for v in result.violations if v.rule_id == "R21"]
+        assert len(r21) == 1
+
+    def test_ca_on_two_different_days_fails(self):
+        day1 = make_daily(MON, [
+            make_card(BlockType.CA_INTEGRATION, BlockCategory.PROCESSING, fatigue=1, duration=45),
+        ])
+        day2 = make_daily(MON + timedelta(days=3), [
+            make_card(BlockType.CA_INTEGRATION, BlockCategory.PROCESSING, fatigue=1, duration=45),
+        ])
+        plan = make_weekly("test", MON, [day1, day2])
+        result = validate_weekly_plan(plan, _user(), Phase.CONSOLIDATION)
+        r21 = [v for v in result.violations if v.rule_id == "R21"]
+        assert len(r21) == 1
+
+    def test_zero_ca_passes(self):
+        day = make_daily(MON, [
+            make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, fatigue=1, duration=60),
+        ])
+        plan = make_weekly("test", MON, [day])
+        result = validate_weekly_plan(plan, _user(), Phase.FOUNDATION)
+        r21 = [v for v in result.violations if v.rule_id == "R21"]
+        assert len(r21) == 0
+
+    def test_one_ca_per_week_all_phases(self):
+        """R21 applies to all phases — 1/week max."""
+        for phase in [Phase.FOUNDATION, Phase.CONSOLIDATION, Phase.PRELIMS_SPRINT_75,
+                      Phase.MAINS_SPRINT_90, Phase.INTERVIEW]:
+            day = make_daily(MON, [
+                make_card(BlockType.CA_INTEGRATION, BlockCategory.PROCESSING, fatigue=1, duration=45),
+            ])
+            plan = make_weekly("test", MON, [day])
+            result = validate_weekly_plan(plan, _user(), phase)
+            r21 = [v for v in result.violations if v.rule_id == "R21"]
+            assert len(r21) == 0, f"Failed for phase {phase}"
 
 
 class TestValidPlan:

@@ -94,7 +94,7 @@ class TestBuildSystemPrompt:
 
     def test_mentions_hard_rules(self):
         prompt = build_system_prompt()
-        for rule in ["R03", "R04", "R05", "R08", "R09", "R12", "R13"]:
+        for rule in ["R03", "R04", "R05", "R08", "R09", "R12", "R13", "R21"]:
             assert rule in prompt, f"System prompt should mention {rule}"
 
 
