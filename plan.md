@@ -114,6 +114,19 @@ Reworked build order into 9 phases (A-I). Key decisions:
 - DynamoDB schema design for learning profile cache (defer to Phase H)
 - Syllabus topic tree structure (pending user addition)
 
+## Action Items
+
+### NEWS + CA Block Frequency (Before finishing Phase D tuning)
+**Owner**: Kartik (consult pro/gf)
+**Status**: Resolved
+**Resolution**: Two changes implemented after consulting pro:
+1. **NEWS_READING fatigue → 0**: It's a fixed 20m daily overhead, not a cognitive load item. Time is pre-deducted but fatigue is zero. No longer counts against the cap.
+2. **R21 — CA Integration Frequency (Hard rule)**: CA_INTEGRATION is NOT daily. Phase-dependent: Foundation 1/month, Consolidation 2/month (biweekly), Sprint/Mains/Interview 1/week. Validator enforces max 1/week. `max_per_week` updated to 2 in block definitions, prompt updated to remove CA from filler lists.
+
+**Impact on 4h user**: Cap 8 now fully available for study blocks. NEWS costs 0 fatigue (was 1). CA appears at most 1/week (was daily, costing 1/day). Net gain: +1 fatigue/day on all days, +2 on the CA day → 4h user should now converge on first attempt.
+
+**Files changed**: `models/kb.py`, `models/plan.py`, `kb/blocks.py`, `engine/validator.py`, `agent/prompt.py`, `knowledgebase/rules.md`, `knowledgebase/block_definitions.md`
+
 ## Resolved
 
 - Strands SDK: `pip install strands-agents strands-agents-tools` (also needs `botocore[crt]`)
