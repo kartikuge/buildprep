@@ -128,9 +128,12 @@ def _validate_r08(plan: WeeklyPlan, profile: UserProfile, phase: Phase) -> list[
     return violations
 
 
-def _validate_r09(plan: WeeklyPlan) -> list[ValidationViolation]:
-    """R09: Core Learning max 2 subjects/day, Core Retention max 4."""
+def _validate_r09(plan: WeeklyPlan, profile: UserProfile) -> list[ValidationViolation]:
+    """R09: Core Learning max 2 subjects/day (3 if ≥8h), Core Retention max 4 (5 if ≥8h)."""
     violations: list[ValidationViolation] = []
+    high_hours = profile.available_hours_per_day >= 8
+    cl_max = 3 if high_hours else 2
+    cr_max = 5 if high_hours else 4
     for day in plan.days:
         cl_subjects = {
             c.subject for c in day.cards
@@ -140,20 +143,24 @@ def _validate_r09(plan: WeeklyPlan) -> list[ValidationViolation]:
             c.subject for c in day.cards
             if c.category == BlockCategory.CORE_RETENTION and c.subject is not None
         }
-        if len(cl_subjects) > 2:
+        if len(cl_subjects) > cl_max:
             violations.append(
                 ValidationViolation(
                     rule_id="R09",
-                    message=f"Core Learning has {len(cl_subjects)} subjects (max 2)",
+                    message=f"Core Learning has {len(cl_subjects)} subjects (max {cl_max})",
                     day=day.date,
                 )
             )
-        if len(cr_subjects) > 4:
+        if len(cr_subjects) > cr_max:
+            # Light-only days (all fatigue ≤ 2) get a warning, not an error.
+            # Review/revision days naturally spread across more subjects.
+            all_light = all(c.fatigue <= 2 for c in day.cards)
             violations.append(
                 ValidationViolation(
                     rule_id="R09",
-                    message=f"Core Retention has {len(cr_subjects)} subjects (max 4)",
+                    message=f"Core Retention has {len(cr_subjects)} subjects (max {cr_max})",
                     day=day.date,
+                    severity="warning" if all_light else "error",
                 )
             )
     return violations
@@ -201,6 +208,30 @@ def _validate_r13(plan: WeeklyPlan) -> list[ValidationViolation]:
     return violations
 
 
+def _validate_r21(plan: WeeklyPlan) -> list[ValidationViolation]:
+    """R21: CA Integration max 1 per week (all phases).
+
+    Phase-specific monthly limits (Foundation 1/month, Consolidation 2/month)
+    translate to at most 1 per week in any given week. Sprint/Mains/Interview
+    are explicitly 1/week.
+    """
+    violations: list[ValidationViolation] = []
+    ca_count = sum(
+        1
+        for day in plan.days
+        for card in day.cards
+        if card.block_type == BlockType.CA_INTEGRATION
+    )
+    if ca_count > 1:
+        violations.append(
+            ValidationViolation(
+                rule_id="R21",
+                message=f"CA Integration scheduled {ca_count} times this week (max 1)",
+            )
+        )
+    return violations
+
+
 def validate_weekly_plan(
     plan: WeeklyPlan, profile: UserProfile, phase: Phase
 ) -> ValidationResult:
@@ -210,7 +241,9 @@ def validate_weekly_plan(
     violations.extend(_validate_r04(plan))
     violations.extend(_validate_r05(plan))
     violations.extend(_validate_r08(plan, profile, phase))
-    violations.extend(_validate_r09(plan))
+    violations.extend(_validate_r09(plan, profile))
     violations.extend(_validate_r12(plan, profile))
     violations.extend(_validate_r13(plan))
-    return ValidationResult(valid=len(violations) == 0, violations=violations)
+    violations.extend(_validate_r21(plan))
+    errors = [v for v in violations if v.severity == "error"]
+    return ValidationResult(valid=len(errors) == 0, violations=violations)
