@@ -31,15 +31,15 @@ USERS = [
     #     mains_date=date(2026, 9, 19),
     #     available_hours_per_day=4.0,
     # ),
-    UserProfile(
-        user_id="test-6h",
-        display_name="6-Hour User",
-        optional_subject="PSIR",
-        stage="both",
-        prelims_date=date(2026, 5, 25),
-        mains_date=date(2026, 9, 19),
-        available_hours_per_day=6.0,
-    ),
+    # UserProfile(
+    #     user_id="test-6h",
+    #     display_name="6-Hour User",
+    #     optional_subject="PSIR",
+    #     stage="both",
+    #     prelims_date=date(2026, 5, 25),
+    #     mains_date=date(2026, 9, 19),
+    #     available_hours_per_day=6.0,
+    # ),
     # UserProfile(
     #     user_id="test-8h",
     #     display_name="8-Hour User",
@@ -49,15 +49,15 @@ USERS = [
     #     mains_date=date(2026, 9, 19),
     #     available_hours_per_day=8.0,
     # ),
-    # UserProfile(
-    #     user_id="test-10h",
-    #     display_name="10-Hour User",
-    #     optional_subject="Geography",
-    #     stage="both",
-    #     prelims_date=date(2026, 5, 25),
-    #     mains_date=date(2026, 9, 19),
-    #     available_hours_per_day=10.0,
-    # ),
+    UserProfile(
+        user_id="test-10h",
+        display_name="10-Hour User",
+        optional_subject="Geography",
+        stage="both",
+        prelims_date=date(2026, 5, 25),
+        mains_date=date(2026, 9, 19),
+        available_hours_per_day=10.0,
+    ),
 ]
 
 CONFIDENCES_MAP = {
