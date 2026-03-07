@@ -19,7 +19,7 @@ Stack: Strands + Amazon Nova 2 Lite (Bedrock), Nova Act, React, DynamoDB, Cognit
 - [x] Phase D (API): FastAPI layer (4 endpoints, 15 tests)
 - [x] Phase D (Frontend base): 6-step onboarding wizard, calendar with WeekOverview + DayDetail + Schedule Insights
 - [x] Phase D (Engine tuning): NEWS/CA fixes, fatigue correction, R09 expansion, R21 validator. 193 tests passing
-- [ ] Phase D (UI polish): Minor tweaks pending
+- [x] Phase D (UI polish): Two-column calendar layout, 7-day grid (no scroll), reschedule in header, mark complete inline with date. CSAT added to confidence step.
 
 ### Remaining — Reworked Build Phases
 
@@ -162,8 +162,8 @@ Series of engine fixes driven by integration testing across 4h and 10h user prof
 **Gap**: Users with ≤4 available_hours_per_day occasionally fail to converge within 3 retries due to tight fatigue caps. The LLM struggles to fit meaningful study blocks under a cap of 8 (4h × 2). Not blocking — works most of the time, but needs prompt tuning or a relaxed cap formula for low-hours users in a future pass.
 
 ### CSAT Confidence Collection
-**Status**: Open
-**Gap**: Onboarding collects confidence for `MAINS_SUBJECTS` (History, Geography, Polity, Economy, Environment, Sci_Tech, Ethics, Essay) + optional subject if selected. CSAT is defined in the Subject enum and in `PRELIMS_SUBJECTS` but is NOT collected during onboarding. The engine/LLM has CSAT as a valid subject and can schedule CSAT_PRACTICE blocks, but the confidence score is never seeded — it defaults to 3. R01 (CSAT Bump) depends on CSAT confidence to trigger. This needs a frontend fix to include CSAT in the confidence step.
+**Status**: Resolved
+**Resolution**: CSAT added to confidence step in onboarding. Initialized to 3 in wizard state, displayed after mains subjects (before optional) with "Prelims" paper tag. R01 (CSAT Bump) now has a real confidence value to work with.
 
 ## Resolved
 

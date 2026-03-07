@@ -15,10 +15,17 @@ export function DayDetail({ day }: Props) {
         <h3 className="text-lg font-semibold text-gray-900">
           {format(dateObj, 'EEEE, MMMM d')}
         </h3>
-        {day.finalized && (
+        {day.finalized ? (
           <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-green-100 text-green-700">
             Completed
           </span>
+        ) : (
+          <button
+            disabled
+            className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-400 cursor-not-allowed"
+          >
+            Mark Complete
+          </button>
         )}
       </div>
 
@@ -33,15 +40,6 @@ export function DayDetail({ day }: Props) {
           ))}
         </div>
       )}
-
-      <div className="mt-4 pt-4 border-t border-gray-100">
-        <button
-          disabled
-          className="w-full py-2.5 rounded-xl border border-gray-200 text-sm text-gray-400 cursor-not-allowed"
-        >
-          Mark Day Complete (coming soon)
-        </button>
-      </div>
     </div>
   )
 }

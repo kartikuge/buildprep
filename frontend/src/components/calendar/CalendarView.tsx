@@ -80,7 +80,7 @@ export function CalendarView() {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200">
-        <div className="max-w-3xl mx-auto px-4 py-4">
+        <div className="max-w-6xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between mb-1">
             <div>
               <span className="text-xs font-semibold text-green-700 bg-green-100 px-2 py-0.5 rounded-full uppercase tracking-wider">
@@ -88,6 +88,12 @@ export function CalendarView() {
               </span>
             </div>
             <div className="flex items-center gap-3">
+              <button
+                disabled
+                className="px-3 py-1 rounded-lg border border-gray-200 text-xs text-gray-400 cursor-not-allowed"
+              >
+                Reschedule Week
+              </button>
               <span className="text-sm text-gray-400">
                 Hi, {displayName}
               </span>
@@ -137,10 +143,10 @@ export function CalendarView() {
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-4 py-6 space-y-5">
+      <main className="max-w-6xl mx-auto px-4 py-6">
         {/* Progress bar */}
         {plan && (
-          <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+          <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden mb-5">
             <div
               className="h-full bg-green-500 transition-all duration-300 rounded-full"
               style={{
@@ -169,30 +175,28 @@ export function CalendarView() {
         )}
 
         {plan && (
-          <>
-            <WeekOverview
-              days={plan.days}
-              selectedDay={effectiveSelectedDay}
-              onSelectDay={setSelectedDay}
-            />
-
-            <WeekNarrative
-              narrative={plan.narrative}
-              days={plan.days}
-              phase={phase}
-            />
-
-            {selectedDayPlan && <DayDetail day={selectedDayPlan} />}
-
-            <div className="text-center">
-              <button
-                disabled
-                className="px-6 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-400 cursor-not-allowed"
-              >
-                Reschedule Week (coming soon)
-              </button>
+          <div className="flex gap-5">
+            {/* Left column — Schedule Insights + Reschedule */}
+            <div className="w-72 flex-shrink-0">
+              <div className="sticky top-6">
+                <WeekNarrative
+                  narrative={plan.narrative}
+                  days={plan.days}
+                  phase={phase}
+                />
+              </div>
             </div>
-          </>
+
+            {/* Right column — Week overview + Day detail */}
+            <div className="flex-1 min-w-0 space-y-5">
+              <WeekOverview
+                days={plan.days}
+                selectedDay={effectiveSelectedDay}
+                onSelectDay={setSelectedDay}
+              />
+              {selectedDayPlan && <DayDetail day={selectedDayPlan} />}
+            </div>
+          </div>
         )}
 
         {!weekStart && (
