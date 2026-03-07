@@ -13,7 +13,7 @@ from preptrack.models.enums import (
 class BlockDefinition(BaseModel):
     block_type: BlockType
     category: BlockCategory
-    fatigue: int = Field(ge=1, le=4)
+    fatigue: int = Field(ge=0, le=4)
     fatigue_high: int | None = None
     fatigue_threshold: int | None = None
     heavy: HeavyLevel = HeavyLevel.NONE

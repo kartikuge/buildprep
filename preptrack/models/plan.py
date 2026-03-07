@@ -19,7 +19,7 @@ class PlanCard(BaseModel):
     topic: str | None = None
     planned_duration: int = Field(gt=0)
     actual_duration: int | None = None
-    fatigue: int = Field(ge=1, le=4)
+    fatigue: int = Field(ge=0, le=4)
     order: int = Field(ge=0)
     status: CheckInStatus = CheckInStatus.PENDING
 

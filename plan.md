@@ -14,6 +14,12 @@ Stack: Strands + Amazon Nova 2 Lite (Bedrock), Nova Act, React, DynamoDB, Cognit
 - [x] Step 1: Strands + Nova 2 Lite hello world — simple agent working end to end
 - [x] Step 2: Reference corpus / Knowledge Base — 6 structured KB files created (block_definitions, confidence_model, engine_reference, phase_blueprints, rules, subject_weights). Stress tested with Claude chat mode.
 - [x] Step 3: Plan generation logic validated — prompt + KB tested externally via Claude chat
+- [x] Phase A: Pydantic models, deterministic engine (6 modules), DynamoDB Local storage, 87 unit tests
+- [x] Phase C: Plan generation agent (Strands + engine validation loop), 138 non-integration tests
+- [x] Phase D (API): FastAPI layer (4 endpoints, 15 tests)
+- [x] Phase D (Frontend base): 6-step onboarding wizard, calendar with WeekOverview + DayDetail + Schedule Insights
+- [x] Phase D (Engine tuning): NEWS/CA fixes, fatigue correction, R09 expansion, R21 validator. 193 tests passing
+- [ ] Phase D (UI polish): Minor tweaks pending
 
 ### Remaining — Reworked Build Phases
 
@@ -91,6 +97,25 @@ Reworked build order into 9 phases (A-I). Key decisions:
 - Frontend: Vite + React + TS, Tailwind, shadcn/ui, Zustand, TanStack Query
 - Starting Phase A: data models + deterministic engine
 
+### 2026-03-01 — Phase D: API + Frontend
+
+FastAPI API layer (4 endpoints, 15 tests). React frontend with 5-step onboarding wizard and basic calendar grid.
+
+### 2026-03-02 — Phase D Revision: Frontend Redesign
+
+Onboarding expanded 5→6 steps: new optional subject page, exam cycle selector (replaces date picker), multi-select time preferences. Calendar redesigned: WeekOverview (compact day cards), DayDetail (selected day view), Schedule Insights (replaces narrative). No red/warning colors — green for progress, gray for pending, amber for selected.
+
+### 2026-03-02 — Engine Tuning: NEWS/CA/Fatigue/R09
+
+Series of engine fixes driven by integration testing across 4h and 10h user profiles:
+1. NEWS_READING fatigue → 0, CA_INTEGRATION governed by R21 (hard, max 1/week)
+2. `_correct_fatigue()` deterministic post-processor for LLM fatigue mistakes
+3. Pre-computed fatigue cap injected into prompt (LLM was miscalculating)
+4. R09 expanded for 8h+ users (CL max 3, CR max 5), depth-over-breadth guidance
+5. R09 CR violations downgraded to warning on light-only days (all fatigue ≤ 2)
+
+193 tests passing (32 validator, 161 others). Still in Phase D — UI tweaks pending.
+
 ---
 
 ## Decisions Log
@@ -116,16 +141,25 @@ Reworked build order into 9 phases (A-I). Key decisions:
 
 ## Action Items
 
-### NEWS + CA Block Frequency (Before finishing Phase D tuning)
-**Owner**: Kartik (consult pro/gf)
+### NEWS + CA Block Frequency
 **Status**: Resolved
-**Resolution**: Two changes implemented after consulting pro:
-1. **NEWS_READING fatigue → 0**: It's a fixed 20m daily overhead, not a cognitive load item. Time is pre-deducted but fatigue is zero. No longer counts against the cap.
-2. **R21 — CA Integration Frequency (Hard rule)**: CA_INTEGRATION is NOT daily. Phase-dependent: Foundation 1/month, Consolidation 2/month (biweekly), Sprint/Mains/Interview 1/week. Validator enforces max 1/week. `max_per_week` updated to 2 in block definitions, prompt updated to remove CA from filler lists.
+**Resolution**: NEWS_READING fatigue → 0 (fixed overhead, not cognitive load). R21 (CA Integration Frequency) added as hard rule — CA_INTEGRATION max 1/week, validator enforced. 4h user now converges on first attempt.
 
-**Impact on 4h user**: Cap 8 now fully available for study blocks. NEWS costs 0 fatigue (was 1). CA appears at most 1/week (was daily, costing 1/day). Net gain: +1 fatigue/day on all days, +2 on the CA day → 4h user should now converge on first attempt.
+### Duration-Based Fatigue Correction
+**Status**: Resolved
+**Resolution**: LLM frequently assigned wrong fatigue to duration-sensitive blocks (e.g., 90-min DEEP_STUDY getting fatigue 3 instead of 2). Added `_correct_fatigue()` deterministic post-processor in planner.py that overwrites all card fatigue with correct values from block definitions. Runs before R13 repair and validation.
 
-**Files changed**: `models/kb.py`, `models/plan.py`, `kb/blocks.py`, `engine/validator.py`, `agent/prompt.py`, `knowledgebase/rules.md`, `knowledgebase/block_definitions.md`
+### R09 Update for 8h+ Users
+**Status**: Resolved
+**Resolution**: 10h users kept violating R09 (3+ CL subjects, 6+ CR subjects). Root causes: (1) LLM miscalculating fatigue cap — fixed by pre-computing cap in engine and injecting into prompt. (2) LLM defaulting to short blocks across many subjects instead of deeper sessions on fewer — fixed with "depth over breadth" prompting guidance. (3) Hard limits too tight for high-hours users — expanded: CL max 3 (was 2) and CR max 5 (was 4) when `available_hours >= 8`. R10 merged into R09.
+
+### R09 CR Light-Day Severity Downgrade
+**Status**: Resolved
+**Resolution**: 10h user's review/consolidation days (e.g., Sunday with 6 REVISION blocks at fatigue 1) were rejected for exceeding CR subject cap. These are perfectly valid light days. Fix: CR violations downgraded from "error" to "warning" when ALL blocks on that day have fatigue ≤ 2. `validate_weekly_plan` now only counts error-severity violations for plan rejection — warnings are logged but don't burn retries.
+
+### CSAT Confidence Collection
+**Status**: Open
+**Gap**: Onboarding collects confidence for `MAINS_SUBJECTS` (History, Geography, Polity, Economy, Environment, Sci_Tech, Ethics, Essay) + optional subject if selected. CSAT is defined in the Subject enum and in `PRELIMS_SUBJECTS` but is NOT collected during onboarding. The engine/LLM has CSAT as a valid subject and can schedule CSAT_PRACTICE blocks, but the confidence score is never seeded — it defaults to 3. R01 (CSAT Bump) depends on CSAT confidence to trigger. This needs a frontend fix to include CSAT in the confidence step.
 
 ## Resolved
 

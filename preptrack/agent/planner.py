@@ -148,6 +148,35 @@ _LIGHT_REPLACEMENTS = {
 }
 
 
+def _correct_fatigue(plan: WeeklyPlan) -> WeeklyPlan:
+    """Overwrite LLM-assigned fatigue with correct values from block definitions.
+
+    The LLM frequently gets duration-based fatigue wrong (e.g. assigning
+    fatigue 3 to a 90-min DEEP_STUDY when it should be 2). Since fatigue
+    values are deterministic given block_type + duration, we fix them here.
+    """
+    corrected = False
+    for day in plan.days:
+        for card in day.cards:
+            defn = _BLOCK_DEF.get(card.block_type)
+            if defn is None:
+                continue
+            correct = defn.fatigue_for_duration(card.planned_duration)
+            if card.fatigue != correct:
+                logger.debug(
+                    "Fatigue correction: %s %dm — %d → %d",
+                    card.block_type.value,
+                    card.planned_duration,
+                    card.fatigue,
+                    correct,
+                )
+                card.fatigue = correct
+                corrected = True
+    if corrected:
+        logger.info("Fatigue correction applied to LLM output")
+    return plan
+
+
 def _repair_r13(plan: WeeklyPlan) -> WeeklyPlan:
     """Deterministically fix R13 violations by downgrading heavy cards on day 5+.
 
@@ -267,7 +296,7 @@ def generate_plan(
         # Call LLM
         plan = _call_llm(agent, user_prompt)
 
-        logger.info(f"FUTURE DEBUG: LLM returned plan:\n{plan.model_dump_json(indent=2) if plan else 'Nothing returned by agent.'}")
+        # logger.info(f"FUTURE DEBUG: LLM returned plan:\n{plan.model_dump_json(indent=2) if plan else 'Nothing returned by agent.'}")
 
         if plan is None:
             logger.warning("Attempt %d/%d: LLM returned unparseable output", attempt, MAX_RETRIES)
@@ -281,8 +310,11 @@ def generate_plan(
             last_violations = violations
             continue
 
-        # 3.5 Deterministic repair for common LLM mistakes
+        # 3.5 Deterministic corrections for common LLM mistakes
+        plan = _correct_fatigue(plan)
         plan = _repair_r13(plan)
+
+        logger.info(f"FUTURE DEBUG: LLM returned plan:\n{plan.model_dump_json(indent=2) if plan else 'Nothing returned by agent.'}")
 
         # 4. Validate
         validation = validate_weekly_plan(plan, profile, phase)
@@ -304,6 +336,7 @@ def generate_plan(
             len(violations),
             [v.message for v in violations],
         )
+        logger.info("Violations details: %s", [v.model_dump() for v in violations])
 
     # All retries exhausted
     raise PlanGenerationError(

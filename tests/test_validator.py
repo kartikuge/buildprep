@@ -254,7 +254,8 @@ class TestR09TopicDiversity:
         r09 = [v for v in result.violations if v.rule_id == "R09"]
         assert len(r09) == 0
 
-    def test_six_cr_subjects_fails_for_8h_user(self):
+    def test_six_cr_subjects_warning_for_8h_user_light_day(self):
+        """6 CR subjects on a light day for 8h user → warning, plan still valid."""
         day = make_daily(MON, [
             make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.HISTORY, fatigue=1, duration=30),
             make_card(BlockType.REVISION, BlockCategory.CORE_RETENTION, Subject.ECONOMY, fatigue=1, duration=30),
@@ -267,6 +268,8 @@ class TestR09TopicDiversity:
         result = validate_weekly_plan(plan, _user(8.0), Phase.FOUNDATION)
         r09 = [v for v in result.violations if v.rule_id == "R09"]
         assert len(r09) == 1
+        assert r09[0].severity == "warning"
+        assert result.valid
 
 
 class TestR12WorkingProfessionalGuard:

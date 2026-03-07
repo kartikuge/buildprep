@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from preptrack.engine.fatigue import compute_daily_fatigue_cap
 from preptrack.models.enums import BlockCategory, Phase, Subject
 from preptrack.models.plan import SubjectPriority, ValidationViolation
 from preptrack.models.user import UserProfile
@@ -20,9 +21,9 @@ You produce a WeeklyPlan for a UPSC aspirant. You decide which block types, subj
 - Every PlanCard must use a valid BlockType and its matching BlockCategory from the block definitions.
 - Card durations must fall within the block's [min_duration, max_duration] range.
 - Fatigue MUST match the block definition for the chosen duration. Some blocks have duration-based fatigue (see below).
-- You MUST schedule at least 85% of available daily minutes. If the fatigue cap is not reached, keep adding low-fatigue blocks (REVISION, QUICK_RECALL, PYQ_ANALYSIS, STUDY_LIGHT, WEAK_AREA_DRILL, CA_INTEGRATION, NOTE_REFINEMENT). Do NOT under-schedule.
+- You MUST schedule at least 85% of available daily minutes. If the fatigue cap is not reached, keep adding low-fatigue blocks (REVISION, QUICK_RECALL, PYQ_ANALYSIS, STUDY_LIGHT, WEAK_AREA_DRILL, NOTE_REFINEMENT). Do NOT under-schedule.
 - The category budgets are PER DAY targets, not weekly totals.
-- Respect all hard rules (R03, R04, R05, R08, R09, R12, R13). If you violate them, the plan will be rejected.
+- Respect all hard rules (R03, R04, R05, R08, R09, R12, R13, R21). If you violate them, the plan will be rejected.
 - Each day must have cards ordered sequentially starting from 0.
 - Assign meaningful UPSC subtopics to each card (not generic labels).
 - Include a brief narrative explaining your weekly strategy.
@@ -35,10 +36,15 @@ Three blocks have fatigue that depends on their duration. This is a key lever fo
 
 Use shorter durations (fatigue 2) when you need to fit more blocks under the fatigue cap. Use longer durations (fatigue 3) when fatigue budget allows deeper sessions.
 
+## R09 — Topic Diversity (Hard)
+- Core Learning: Max 2 distinct subjects/day. Min 2 if 2+ blocks scheduled. If available_hours ≥ 8, max 3 distinct subjects/day. Depth over breadth — when Core Learning budget exceeds 120 min/day, prefer longer block durations (90-120 min) over adding more subjects. A 90-min Deep Study is more valuable than two 45-min sessions on different topics.
+- Core Retention: Max 4 distinct subjects/day. If available_hours ≥ 8, max 5 distinct subjects/day. Same principle: prefer deeper revision on fewer subjects over shallow passes on many.
+- Other categories: Topic-agnostic, no diversity constraint.
+
 ## CRITICAL — R13 Burnout Prevention (most commonly violated rule)
 A "heavy day" is any day that has at least one card with fatigue >= 3.
 You MUST NOT have more than 4 consecutive heavy days. After 4 heavy days in a row, the next day MUST be light-only (all cards fatigue <= 2).
-Strategy: make day 5 or day 7 (Sunday) a light day using only REVISION, QUICK_RECALL, PYQ_ANALYSIS, NEWS_READING, CA_INTEGRATION, NOTE_REFINEMENT, WEEKLY_REVIEW, STUDY_LIGHT, CSAT_PRACTICE, WEAK_AREA_DRILL, or CONSOLIDATION_DAY. You can also use DEEP_STUDY/STUDY_TECHNICAL at short durations (fatigue 2) on light days.
+Strategy: make day 5 or day 7 (Sunday) a light day using only REVISION, QUICK_RECALL, PYQ_ANALYSIS, NEWS_READING, NOTE_REFINEMENT, WEEKLY_REVIEW, STUDY_LIGHT, CSAT_PRACTICE, WEAK_AREA_DRILL, or CONSOLIDATION_DAY. You can also use DEEP_STUDY/STUDY_TECHNICAL at short durations (fatigue 2) on light days.
 Example valid pattern: Heavy, Heavy, Heavy, Heavy, Light, Heavy, Heavy.
 Example INVALID pattern: Heavy, Heavy, Heavy, Heavy, Heavy, Heavy, Light - REJECTED.
 
@@ -58,6 +64,7 @@ def build_plan_prompt(
     """User prompt with all context the LLM needs to generate a WeeklyPlan."""
     available_minutes = int(profile.available_hours_per_day * 60)
     min_daily = int(available_minutes * 0.85)
+    fatigue_cap = compute_daily_fatigue_cap(profile.available_hours_per_day, phase)
     week_dates = [(week_start + timedelta(days=i)).isoformat() for i in range(7)]
 
     sections: list[str] = []
@@ -71,7 +78,8 @@ def build_plan_prompt(
 - mains_date: {profile.mains_date or "Not set"}
 - available_hours_per_day: {profile.available_hours_per_day}
 - available_minutes_per_day: {available_minutes}
-- MINIMUM minutes per day: {min_daily} (85% of {available_minutes})""")
+- MINIMUM minutes per day: {min_daily} (85% of {available_minutes})
+- DAILY FATIGUE CAP: {fatigue_cap} (pre-computed, do NOT recalculate)""")
 
     # Phase
     sections.append(f"""## Current Phase
