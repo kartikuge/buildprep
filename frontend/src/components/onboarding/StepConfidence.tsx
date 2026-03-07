@@ -33,6 +33,13 @@ export function StepConfidence({
     }),
   )
 
+  // CSAT (Prelims Paper II)
+  subjects.push({
+    key: 'CSAT',
+    label: SUBJECT_INFO['CSAT'].label,
+    paper: SUBJECT_INFO['CSAT'].paper,
+  })
+
   if (optionalSubject) {
     subjects.push({
       key: 'OPTIONAL',

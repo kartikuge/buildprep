@@ -24,6 +24,7 @@ export function OnboardingWizard() {
   const [confidences, setConfidences] = useState<Record<string, number>>(() => {
     const init: Record<string, number> = {}
     MAINS_SUBJECTS.forEach((s) => (init[s] = 3))
+    init['CSAT'] = 3
     return init
   })
 

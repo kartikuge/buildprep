@@ -157,6 +157,10 @@ Series of engine fixes driven by integration testing across 4h and 10h user prof
 **Status**: Resolved
 **Resolution**: 10h user's review/consolidation days (e.g., Sunday with 6 REVISION blocks at fatigue 1) were rejected for exceeding CR subject cap. These are perfectly valid light days. Fix: CR violations downgraded from "error" to "warning" when ALL blocks on that day have fatigue ≤ 2. `validate_weekly_plan` now only counts error-severity violations for plan rejection — warnings are logged but don't burn retries.
 
+### Low-Hours User Fatigue Convergence
+**Status**: Deferred
+**Gap**: Users with ≤4 available_hours_per_day occasionally fail to converge within 3 retries due to tight fatigue caps. The LLM struggles to fit meaningful study blocks under a cap of 8 (4h × 2). Not blocking — works most of the time, but needs prompt tuning or a relaxed cap formula for low-hours users in a future pass.
+
 ### CSAT Confidence Collection
 **Status**: Open
 **Gap**: Onboarding collects confidence for `MAINS_SUBJECTS` (History, Geography, Polity, Economy, Environment, Sci_Tech, Ethics, Essay) + optional subject if selected. CSAT is defined in the Subject enum and in `PRELIMS_SUBJECTS` but is NOT collected during onboarding. The engine/LLM has CSAT as a valid subject and can schedule CSAT_PRACTICE blocks, but the confidence score is never seeded — it defaults to 3. R01 (CSAT Bump) depends on CSAT confidence to trigger. This needs a frontend fix to include CSAT in the confidence step.
