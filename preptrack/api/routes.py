@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -6,9 +6,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from preptrack.agent.exceptions import PlanGenerationError
 from preptrack.agent.planner import generate_plan
 from preptrack.api.deps import get_storage
-from preptrack.api.schemas import GeneratePlanRequest, OnboardRequest, OnboardResponse
-from preptrack.models.enums import Subject
-from preptrack.models.user import TopicConfidence, UserProfile
+from preptrack.api.schemas import (
+    CheckInRequest,
+    CheckInResponse,
+    GeneratePlanRequest,
+    OnboardRequest,
+    OnboardResponse,
+)
+from preptrack.engine.confidence import process_checkin
+from preptrack.kb.confidence import CONFIDENCE_CONFIG
+from preptrack.models.enums import CheckInStatus, Subject
+from preptrack.models.user import (
+    ActivityLogEntry,
+    DayActivity,
+    TopicConfidence,
+    UserProfile,
+)
 from preptrack.storage.base import StorageBackend
 
 router = APIRouter()
@@ -113,3 +126,123 @@ def generate_new_plan(
 
     storage.save_weekly_plan(plan)
     return plan.model_dump(mode="json")
+
+
+@router.post("/users/{user_id}/checkin/{checkin_date}", response_model=CheckInResponse)
+def checkin(
+    user_id: str,
+    checkin_date: date,
+    req: CheckInRequest,
+    storage: StorageBackend = Depends(get_storage),
+):
+    profile = storage.get_user_profile(user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Derive week_start (Monday) from checkin_date
+    week_start = checkin_date - timedelta(days=checkin_date.weekday())
+    plan = storage.get_weekly_plan(user_id, week_start)
+    if not plan:
+        raise HTTPException(status_code=404, detail="No plan found for this week")
+
+    # Find the daily plan for checkin_date
+    daily = None
+    for d in plan.days:
+        if d.date == checkin_date:
+            daily = d
+            break
+    if daily is None:
+        raise HTTPException(status_code=404, detail="No plan for this date")
+
+    if daily.finalized:
+        raise HTTPException(status_code=409, detail="Day already finalized")
+
+    # Build card lookup
+    card_map = {c.card_id: c for c in daily.cards}
+
+    # Update card statuses
+    cards_updated = 0
+    for ci in req.cards:
+        card = card_map.get(ci.card_id)
+        if not card:
+            continue
+        card.status = CheckInStatus(ci.status)
+        if ci.actual_duration is not None:
+            card.actual_duration = ci.actual_duration
+        cards_updated += 1
+
+    # Finalize: mark remaining PENDING as SKIPPED
+    if req.finalize_day:
+        for card in daily.cards:
+            if card.status == CheckInStatus.PENDING:
+                card.status = CheckInStatus.SKIPPED
+        daily.finalized = True
+        daily.finalized_at = datetime.now(UTC)
+
+    storage.save_weekly_plan(plan)
+
+    # Update confidence for each checked-in card that has a subject
+    confidences_updated: list[str] = []
+    existing_confidences = {
+        tc.subject: tc for tc in storage.get_topic_confidences(user_id)
+    }
+
+    for ci in req.cards:
+        card = card_map.get(ci.card_id)
+        if not card or not card.subject:
+            continue
+        status = CheckInStatus(ci.status)
+        tc = existing_confidences.get(card.subject)
+        if not tc:
+            tc = TopicConfidence(
+                user_id=user_id,
+                subject=card.subject,
+                perceived_confidence=2.5,
+            )
+        updated_tc = process_checkin(tc, status, CONFIDENCE_CONFIG, checkin_date)
+        storage.save_topic_confidence(user_id, updated_tc)
+        existing_confidences[card.subject] = updated_tc
+        if card.subject.value not in confidences_updated:
+            confidences_updated.append(card.subject.value)
+
+    # Save activity log
+    entries = []
+    for card in daily.cards:
+        if card.status != CheckInStatus.PENDING:
+            entries.append(
+                ActivityLogEntry(
+                    card_id=card.card_id,
+                    block_type=card.block_type,
+                    subject=card.subject,
+                    topic=card.topic,
+                    planned_duration=card.planned_duration,
+                    actual_duration=card.actual_duration,
+                    status=card.status,
+                )
+            )
+    if entries:
+        activity = DayActivity(
+            user_id=user_id,
+            date=checkin_date,
+            entries=entries,
+            finalized=daily.finalized,
+            finalized_at=daily.finalized_at,
+        )
+        storage.save_activity_log(activity)
+
+    return CheckInResponse(
+        date=checkin_date.isoformat(),
+        finalized=daily.finalized,
+        cards_updated=cards_updated,
+        confidences_updated=confidences_updated,
+    )
+
+
+@router.get("/users/{user_id}/confidence")
+def get_confidences(user_id: str, storage: StorageBackend = Depends(get_storage)):
+    profile = storage.get_user_profile(user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    confidences = storage.get_topic_confidences(user_id)
+    return [c.model_dump(mode="json") for c in confidences]

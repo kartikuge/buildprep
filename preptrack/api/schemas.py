@@ -23,3 +23,21 @@ class OnboardResponse(BaseModel):
 
 class GeneratePlanRequest(BaseModel):
     week_start: date | None = None
+
+
+class CardCheckIn(BaseModel):
+    card_id: str
+    status: str = Field(pattern=r"^(DONE|PARTIAL|SKIPPED)$")
+    actual_duration: int | None = None
+
+
+class CheckInRequest(BaseModel):
+    cards: list[CardCheckIn]
+    finalize_day: bool = False
+
+
+class CheckInResponse(BaseModel):
+    date: str
+    finalized: bool
+    cards_updated: int
+    confidences_updated: list[str]
