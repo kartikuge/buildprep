@@ -39,7 +39,12 @@ class MemoryStorage(StorageBackend):
         return self.confidences.get(user_id, [])
 
     def save_topic_confidence(self, user_id, confidence):
-        self.confidences.setdefault(user_id, []).append(confidence)
+        existing = self.confidences.setdefault(user_id, [])
+        for i, c in enumerate(existing):
+            if c.subject == confidence.subject:
+                existing[i] = confidence
+                return
+        existing.append(confidence)
 
     def get_weekly_plan(self, user_id, week_start):
         return self.plans.get(f"{user_id}:{week_start.isoformat()}")
@@ -333,3 +338,532 @@ def test_onboard_ignores_invalid_subjects(mock_gen, client, memory_storage):
     body = resp.json()
     # Only valid subject saved
     assert len(memory_storage.get_topic_confidences(body["user_id"])) == 1
+
+
+# ── Check-in Fixtures ────────────────────────────────────────────────
+
+
+def _setup_checkin_user(memory_storage, user_id="cu1", week_start=date(2026, 3, 2)):
+    """Create a user + plan with two cards for check-in tests."""
+    profile = UserProfile(
+        user_id=user_id,
+        display_name="CheckIn User",
+        stage="both",
+        prelims_date=date(2026, 5, 25),
+        mains_date=date(2026, 9, 19),
+        available_hours_per_day=6.0,
+    )
+    memory_storage.save_user_profile(profile)
+
+    card_history = PlanCard(
+        card_id="card-history",
+        block_type=BlockType.DEEP_STUDY,
+        category=BlockCategory.CORE_LEARNING,
+        subject=Subject.HISTORY,
+        topic="Ancient India",
+        planned_duration=90,
+        fatigue=2,
+        order=0,
+    )
+    card_news = PlanCard(
+        card_id="card-news",
+        block_type=BlockType.NEWS_READING,
+        category=BlockCategory.INPUT,
+        subject=None,
+        topic=None,
+        planned_duration=30,
+        fatigue=0,
+        order=1,
+    )
+    day = DailyPlan(date=week_start, cards=[card_history, card_news])
+    plan = WeeklyPlan(
+        user_id=user_id,
+        week_start=week_start,
+        days=[day],
+        narrative="Test week.",
+    )
+    memory_storage.save_weekly_plan(plan)
+    return profile, plan
+
+
+# ── Check-in Tests ────────────────────────────────────────────────────
+
+
+def test_checkin_single_card_done(client, memory_storage):
+    _setup_checkin_user(memory_storage)
+
+    resp = client.post(
+        "/api/users/cu1/checkin/2026-03-02",
+        json={"cards": [{"card_id": "card-history", "status": "DONE"}]},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["cards_updated"] == 1
+    assert body["finalized"] is False
+    assert "HISTORY" in body["confidences_updated"]
+
+    # Verify confidence was created/updated
+    confs = memory_storage.get_topic_confidences("cu1")
+    history_conf = next(c for c in confs if c.subject == Subject.HISTORY)
+    assert history_conf.streak == 1
+    assert history_conf.total_sessions == 1
+
+
+def test_checkin_partial_with_duration(client, memory_storage):
+    _setup_checkin_user(memory_storage)
+
+    resp = client.post(
+        "/api/users/cu1/checkin/2026-03-02",
+        json={
+            "cards": [
+                {"card_id": "card-history", "status": "PARTIAL", "actual_duration": 45}
+            ]
+        },
+    )
+    assert resp.status_code == 200
+
+    # Verify actual_duration stored on the card
+    plan = memory_storage.get_weekly_plan("cu1", date(2026, 3, 2))
+    card = next(c for c in plan.days[0].cards if c.card_id == "card-history")
+    assert card.actual_duration == 45
+    assert card.status == CheckInStatus.PARTIAL
+
+
+def test_checkin_skip(client, memory_storage):
+    _setup_checkin_user(memory_storage)
+
+    resp = client.post(
+        "/api/users/cu1/checkin/2026-03-02",
+        json={"cards": [{"card_id": "card-history", "status": "SKIPPED"}]},
+    )
+    assert resp.status_code == 200
+
+    confs = memory_storage.get_topic_confidences("cu1")
+    history_conf = next(c for c in confs if c.subject == Subject.HISTORY)
+    assert history_conf.skip_count == 1
+    assert history_conf.streak == 0
+
+
+def test_checkin_finalize_day(client, memory_storage):
+    _setup_checkin_user(memory_storage)
+
+    resp = client.post(
+        "/api/users/cu1/checkin/2026-03-02",
+        json={
+            "cards": [{"card_id": "card-history", "status": "DONE"}],
+            "finalize_day": True,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["finalized"] is True
+
+    # Remaining PENDING card should be SKIPPED
+    plan = memory_storage.get_weekly_plan("cu1", date(2026, 3, 2))
+    news_card = next(c for c in plan.days[0].cards if c.card_id == "card-news")
+    assert news_card.status == CheckInStatus.SKIPPED
+    assert plan.days[0].finalized is True
+
+
+def test_checkin_already_finalized_409(client, memory_storage):
+    _setup_checkin_user(memory_storage)
+
+    # Finalize first
+    client.post(
+        "/api/users/cu1/checkin/2026-03-02",
+        json={
+            "cards": [{"card_id": "card-history", "status": "DONE"}],
+            "finalize_day": True,
+        },
+    )
+    # Try again
+    resp = client.post(
+        "/api/users/cu1/checkin/2026-03-02",
+        json={"cards": [{"card_id": "card-history", "status": "DONE"}]},
+    )
+    assert resp.status_code == 409
+
+
+def test_checkin_user_not_found_404(client):
+    resp = client.post(
+        "/api/users/nobody/checkin/2026-03-02",
+        json={"cards": [{"card_id": "x", "status": "DONE"}]},
+    )
+    assert resp.status_code == 404
+
+
+def test_checkin_plan_not_found_404(client, memory_storage):
+    profile = UserProfile(
+        user_id="cu_noplan",
+        display_name="No Plan",
+        stage="prelims",
+        prelims_date=date(2026, 5, 25),
+        available_hours_per_day=4.0,
+    )
+    memory_storage.save_user_profile(profile)
+
+    resp = client.post(
+        "/api/users/cu_noplan/checkin/2026-03-02",
+        json={"cards": [{"card_id": "x", "status": "DONE"}]},
+    )
+    assert resp.status_code == 404
+
+
+def test_checkin_no_subject_skips_confidence(client, memory_storage):
+    _setup_checkin_user(memory_storage)
+
+    resp = client.post(
+        "/api/users/cu1/checkin/2026-03-02",
+        json={"cards": [{"card_id": "card-news", "status": "DONE"}]},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["confidences_updated"] == []
+
+
+# ── Confidence Tests ──────────────────────────────────────────────────
+
+
+def test_get_confidences_success(client, memory_storage):
+    profile = UserProfile(
+        user_id="conf1",
+        display_name="Conf User",
+        stage="both",
+        prelims_date=date(2026, 5, 25),
+        mains_date=date(2026, 9, 19),
+        available_hours_per_day=6.0,
+    )
+    memory_storage.save_user_profile(profile)
+    tc = TopicConfidence(user_id="conf1", subject=Subject.POLITY, perceived_confidence=3.5)
+    memory_storage.save_topic_confidence("conf1", tc)
+
+    resp = client.get("/api/users/conf1/confidence")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["subject"] == "POLITY"
+    assert body[0]["perceived_confidence"] == 3.5
+
+
+def test_get_confidences_empty(client, memory_storage):
+    profile = UserProfile(
+        user_id="conf2",
+        display_name="No Confs",
+        stage="prelims",
+        prelims_date=date(2026, 5, 25),
+        available_hours_per_day=4.0,
+    )
+    memory_storage.save_user_profile(profile)
+
+    resp = client.get("/api/users/conf2/confidence")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_get_confidences_user_not_found_404(client):
+    resp = client.get("/api/users/nobody/confidence")
+    assert resp.status_code == 404
+
+
+# ── Check-in Integration Tests (multi-step flows) ────────────────────
+
+
+def _setup_multi_card_user(memory_storage, user_id="int1"):
+    """Create user with a 2-day plan, multiple subjects per day."""
+    profile = UserProfile(
+        user_id=user_id,
+        display_name="Integration User",
+        stage="both",
+        prelims_date=date(2026, 5, 25),
+        mains_date=date(2026, 9, 19),
+        available_hours_per_day=6.0,
+    )
+    memory_storage.save_user_profile(profile)
+
+    day1_cards = [
+        PlanCard(
+            card_id="d1-history",
+            block_type=BlockType.DEEP_STUDY,
+            category=BlockCategory.CORE_LEARNING,
+            subject=Subject.HISTORY,
+            topic="Ancient India",
+            planned_duration=90,
+            fatigue=2,
+            order=0,
+        ),
+        PlanCard(
+            card_id="d1-polity",
+            block_type=BlockType.DEEP_STUDY,
+            category=BlockCategory.CORE_LEARNING,
+            subject=Subject.POLITY,
+            topic="Parliament",
+            planned_duration=60,
+            fatigue=2,
+            order=1,
+        ),
+        PlanCard(
+            card_id="d1-news",
+            block_type=BlockType.NEWS_READING,
+            category=BlockCategory.INPUT,
+            subject=None,
+            topic=None,
+            planned_duration=30,
+            fatigue=0,
+            order=2,
+        ),
+    ]
+    day2_cards = [
+        PlanCard(
+            card_id="d2-history",
+            block_type=BlockType.REVISION,
+            category=BlockCategory.CORE_RETENTION,
+            subject=Subject.HISTORY,
+            topic="Medieval India",
+            planned_duration=45,
+            fatigue=1,
+            order=0,
+        ),
+        PlanCard(
+            card_id="d2-economy",
+            block_type=BlockType.DEEP_STUDY,
+            category=BlockCategory.CORE_LEARNING,
+            subject=Subject.ECONOMY,
+            topic="Fiscal Policy",
+            planned_duration=90,
+            fatigue=2,
+            order=1,
+        ),
+    ]
+    day1 = DailyPlan(date=date(2026, 3, 2), cards=day1_cards)
+    day2 = DailyPlan(date=date(2026, 3, 3), cards=day2_cards)
+    plan = WeeklyPlan(
+        user_id=user_id,
+        week_start=date(2026, 3, 2),
+        days=[day1, day2],
+        narrative="Integration test week.",
+    )
+    memory_storage.save_weekly_plan(plan)
+    return profile
+
+
+def test_integration_full_day_checkin_flow(client, memory_storage):
+    """Full flow: check in cards one by one, then finalize day."""
+    _setup_multi_card_user(memory_storage, "flow1")
+
+    # Step 1: Mark history DONE
+    resp = client.post(
+        "/api/users/flow1/checkin/2026-03-02",
+        json={"cards": [{"card_id": "d1-history", "status": "DONE"}]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["cards_updated"] == 1
+    assert resp.json()["finalized"] is False
+
+    # Step 2: Mark polity PARTIAL (40 of 60 minutes)
+    resp = client.post(
+        "/api/users/flow1/checkin/2026-03-02",
+        json={"cards": [{"card_id": "d1-polity", "status": "PARTIAL", "actual_duration": 40}]},
+    )
+    assert resp.status_code == 200
+    assert "POLITY" in resp.json()["confidences_updated"]
+
+    # Step 3: Finalize — news card (PENDING) should auto-SKIP
+    resp = client.post(
+        "/api/users/flow1/checkin/2026-03-02",
+        json={"cards": [], "finalize_day": True},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["finalized"] is True
+
+    # Verify plan state
+    plan = memory_storage.get_weekly_plan("flow1", date(2026, 3, 2))
+    day1 = plan.days[0]
+    assert day1.finalized is True
+    assert day1.finalized_at is not None
+    card_statuses = {c.card_id: c.status for c in day1.cards}
+    assert card_statuses["d1-history"] == CheckInStatus.DONE
+    assert card_statuses["d1-polity"] == CheckInStatus.PARTIAL
+    assert card_statuses["d1-news"] == CheckInStatus.SKIPPED
+
+    # Verify polity actual_duration persisted
+    polity_card = next(c for c in day1.cards if c.card_id == "d1-polity")
+    assert polity_card.actual_duration == 40
+
+    # Step 4: Attempting to check in again should 409
+    resp = client.post(
+        "/api/users/flow1/checkin/2026-03-02",
+        json={"cards": [{"card_id": "d1-history", "status": "DONE"}]},
+    )
+    assert resp.status_code == 409
+
+
+def test_integration_confidence_accumulates_across_days(client, memory_storage):
+    """Confidence for the same subject accumulates across multiple check-ins."""
+    _setup_multi_card_user(memory_storage, "acc1")
+
+    # Day 1: history DONE
+    resp = client.post(
+        "/api/users/acc1/checkin/2026-03-02",
+        json={"cards": [{"card_id": "d1-history", "status": "DONE"}]},
+    )
+    assert resp.status_code == 200
+
+    confs = memory_storage.get_topic_confidences("acc1")
+    h1 = next(c for c in confs if c.subject == Subject.HISTORY)
+    assert h1.streak == 1
+    assert h1.total_sessions == 1
+
+    # Day 2: history DONE again (different card)
+    resp = client.post(
+        "/api/users/acc1/checkin/2026-03-03",
+        json={"cards": [{"card_id": "d2-history", "status": "DONE"}]},
+    )
+    assert resp.status_code == 200
+
+    confs = memory_storage.get_topic_confidences("acc1")
+    h2 = next(c for c in confs if c.subject == Subject.HISTORY)
+    assert h2.streak == 2
+    assert h2.total_sessions == 2
+
+    # Verify via GET /confidence endpoint
+    resp = client.get("/api/users/acc1/confidence")
+    assert resp.status_code == 200
+    history_api = next(c for c in resp.json() if c["subject"] == "HISTORY")
+    assert history_api["streak"] == 2
+    assert history_api["total_sessions"] == 2
+
+
+def test_integration_skip_then_done_resets_streak(client, memory_storage):
+    """Skip resets streak to 0, subsequent DONE starts streak fresh at 1."""
+    _setup_multi_card_user(memory_storage, "sr1")
+
+    # Day 1: skip history
+    client.post(
+        "/api/users/sr1/checkin/2026-03-02",
+        json={"cards": [{"card_id": "d1-history", "status": "SKIPPED"}]},
+    )
+    confs = memory_storage.get_topic_confidences("sr1")
+    h = next(c for c in confs if c.subject == Subject.HISTORY)
+    assert h.streak == 0
+    assert h.skip_count == 1
+
+    # Day 2: do history
+    client.post(
+        "/api/users/sr1/checkin/2026-03-03",
+        json={"cards": [{"card_id": "d2-history", "status": "DONE"}]},
+    )
+    confs = memory_storage.get_topic_confidences("sr1")
+    h = next(c for c in confs if c.subject == Subject.HISTORY)
+    assert h.streak == 1
+    assert h.skip_count == 0  # reset on completion
+    assert h.total_sessions == 1
+
+
+def test_integration_multi_card_batch_checkin(client, memory_storage):
+    """Submit multiple cards in a single request."""
+    _setup_multi_card_user(memory_storage, "batch1")
+
+    resp = client.post(
+        "/api/users/batch1/checkin/2026-03-02",
+        json={
+            "cards": [
+                {"card_id": "d1-history", "status": "DONE"},
+                {"card_id": "d1-polity", "status": "SKIPPED"},
+                {"card_id": "d1-news", "status": "DONE"},
+            ],
+            "finalize_day": True,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["cards_updated"] == 3
+    assert body["finalized"] is True
+    assert "HISTORY" in body["confidences_updated"]
+    assert "POLITY" in body["confidences_updated"]
+    # NEWS_READING has no subject, shouldn't appear
+    assert len(body["confidences_updated"]) == 2
+
+    # Verify activity log was saved
+    activity = memory_storage.get_activity_log("batch1", date(2026, 3, 2))
+    assert activity is not None
+    assert activity.finalized is True
+    assert len(activity.entries) == 3
+
+
+def test_integration_activity_log_saved_on_checkin(client, memory_storage):
+    """Activity log is persisted with correct entries after check-in."""
+    _setup_multi_card_user(memory_storage, "alog1")
+
+    client.post(
+        "/api/users/alog1/checkin/2026-03-03",
+        json={
+            "cards": [
+                {"card_id": "d2-history", "status": "DONE"},
+                {"card_id": "d2-economy", "status": "PARTIAL", "actual_duration": 60},
+            ],
+        },
+    )
+
+    activity = memory_storage.get_activity_log("alog1", date(2026, 3, 3))
+    assert activity is not None
+    assert len(activity.entries) == 2
+    assert activity.finalized is False
+
+    history_entry = next(e for e in activity.entries if e.card_id == "d2-history")
+    assert history_entry.status == CheckInStatus.DONE
+    assert history_entry.planned_duration == 45
+
+    economy_entry = next(e for e in activity.entries if e.card_id == "d2-economy")
+    assert economy_entry.status == CheckInStatus.PARTIAL
+    assert economy_entry.actual_duration == 60
+
+
+def test_integration_confidence_upsert_not_duplicate(client, memory_storage):
+    """Multiple check-ins for same subject should upsert, not create duplicates."""
+    _setup_multi_card_user(memory_storage, "upsert1")
+
+    # Seed an initial confidence
+    tc = TopicConfidence(user_id="upsert1", subject=Subject.HISTORY, perceived_confidence=2.0)
+    memory_storage.save_topic_confidence("upsert1", tc)
+
+    # Check in day 1
+    client.post(
+        "/api/users/upsert1/checkin/2026-03-02",
+        json={"cards": [{"card_id": "d1-history", "status": "DONE"}]},
+    )
+    # Check in day 2
+    client.post(
+        "/api/users/upsert1/checkin/2026-03-03",
+        json={"cards": [{"card_id": "d2-history", "status": "DONE"}]},
+    )
+
+    # Should have exactly 1 HISTORY confidence, not 3
+    confs = memory_storage.get_topic_confidences("upsert1")
+    history_confs = [c for c in confs if c.subject == Subject.HISTORY]
+    assert len(history_confs) == 1
+    assert history_confs[0].total_sessions == 2
+
+
+def test_integration_day2_independent_of_day1(client, memory_storage):
+    """Day 2 can be checked in without finalizing day 1."""
+    _setup_multi_card_user(memory_storage, "indep1")
+
+    # Check in day 2 first, leaving day 1 untouched
+    resp = client.post(
+        "/api/users/indep1/checkin/2026-03-03",
+        json={
+            "cards": [{"card_id": "d2-economy", "status": "DONE"}],
+            "finalize_day": True,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["finalized"] is True
+
+    # Day 1 should still be available for check-in
+    resp = client.post(
+        "/api/users/indep1/checkin/2026-03-02",
+        json={"cards": [{"card_id": "d1-history", "status": "DONE"}]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["finalized"] is False
