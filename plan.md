@@ -20,6 +20,7 @@ Stack: Strands + Amazon Nova 2 Lite (Bedrock), Nova Act, React, DynamoDB, Cognit
 - [x] Phase D (Frontend base): 6-step onboarding wizard, calendar with WeekOverview + DayDetail + Schedule Insights
 - [x] Phase D (Engine tuning): NEWS/CA fixes, fatigue correction, R09 expansion, R21 validator. 193 tests passing
 - [x] Phase D (UI polish): Two-column calendar layout, 7-day grid (no scroll), reschedule in header, mark complete inline with date. CSAT added to confidence step.
+- [x] Phase E: Check-in + Confidence scoring — card-by-card Done/Partial/Skip, day finalization, deterministic confidence updates, confidence panel. 216 tests passing.
 
 ### Remaining — Reworked Build Phases
 
@@ -116,6 +117,29 @@ Series of engine fixes driven by integration testing across 4h and 10h user prof
 
 193 tests passing (32 validator, 161 others). Still in Phase D — UI tweaks pending.
 
+### 2026-03-07 — Phase E: Check-in + Confidence Scoring
+
+Backend: 2 new endpoints added to FastAPI.
+- `POST /api/users/{user_id}/checkin/{checkin_date}` — card-by-card check-in (DONE/PARTIAL/SKIPPED), optional day finalization (remaining PENDING → SKIPPED), deterministic confidence updates via `process_checkin()`, activity log saving.
+- `GET /api/users/{user_id}/confidence` — returns all topic confidence scores for a user.
+
+Schemas: `CardCheckIn`, `CheckInRequest`, `CheckInResponse` added to `schemas.py`.
+
+Bug fix: `MemoryStorage.save_topic_confidence()` was appending duplicates — fixed to upsert by subject.
+
+Frontend:
+- `PlanCardItem` — inline check-in controls (Done/Partial/Skip buttons), partial duration slider, status visuals (green/amber/gray left borders + badges).
+- `DayDetail` — wired check-in callbacks, "Mark Complete" button enabled when ≥1 card checked in.
+- `CalendarView` — orchestrates `useCheckIn` mutation + `useConfidence` query, passes handlers to DayDetail, renders ConfidencePanel in left sidebar.
+- `ConfidencePanel` (new) — per-subject confidence bars (1–5 scale), sorted weakest-first, streak counts, trend arrows (↑/→/↓), empty state message.
+
+New files: `api/checkin.ts`, `hooks/useCheckIn.ts`, `hooks/useConfidence.ts`, `components/calendar/ConfidencePanel.tsx`.
+
+Tests: 216 passing (was 193). Breakdown of new tests:
+- 11 unit tests in `test_api.py` (single-card DONE/PARTIAL/SKIP, finalize, 409, 404s, no-subject skip, confidence CRUD)
+- 7 API-level integration tests (full-day flow, cross-day confidence accumulation, skip→done streak reset, batch check-in, activity log, upsert dedup, day independence)
+- 5 DynamoDB integration tests in `test_storage.py` (card status persistence, finalize round-trip, confidence upsert, multi-subject independence, activity log entries)
+
 ---
 
 ## Decisions Log
@@ -164,6 +188,10 @@ Series of engine fixes driven by integration testing across 4h and 10h user prof
 ### CSAT Confidence Collection
 **Status**: Resolved
 **Resolution**: CSAT added to confidence step in onboarding. Initialized to 3 in wizard state, displayed after mains subjects (before optional) with "Prelims" paper tag. R01 (CSAT Bump) now has a real confidence value to work with.
+
+### MemoryStorage Confidence Upsert
+**Status**: Resolved
+**Resolution**: `MemoryStorage.save_topic_confidence()` was appending blindly, creating duplicate entries per subject. Fixed to upsert by subject — scans existing list, replaces matching entry or appends if new. Verified with integration test (`test_integration_confidence_upsert_not_duplicate`).
 
 ## Resolved
 

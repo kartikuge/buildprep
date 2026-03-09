@@ -4,10 +4,15 @@ import { PlanCardItem } from './PlanCardItem'
 
 interface Props {
   day: DailyPlan
+  onCardCheckIn?: (cardId: string, status: 'DONE' | 'PARTIAL' | 'SKIPPED', actualDuration?: number) => void
+  onFinalizeDay?: () => void
+  isCheckingIn?: boolean
 }
 
-export function DayDetail({ day }: Props) {
+export function DayDetail({ day, onCardCheckIn, onFinalizeDay, isCheckingIn }: Props) {
   const dateObj = parseISO(day.date)
+  const hasCheckedIn = day.cards.some((c) => c.status !== 'PENDING')
+  const canFinalize = !day.finalized && hasCheckedIn && !isCheckingIn
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-5">
@@ -21,10 +26,15 @@ export function DayDetail({ day }: Props) {
           </span>
         ) : (
           <button
-            disabled
-            className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-400 cursor-not-allowed"
+            disabled={!canFinalize}
+            onClick={onFinalizeDay}
+            className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition ${
+              canFinalize
+                ? 'border-green-300 text-green-700 bg-green-50 hover:bg-green-100 cursor-pointer'
+                : 'border-gray-200 text-gray-400 cursor-not-allowed'
+            }`}
           >
-            Mark Complete
+            {isCheckingIn ? 'Saving...' : 'Mark Complete'}
           </button>
         )}
       </div>
@@ -36,7 +46,12 @@ export function DayDetail({ day }: Props) {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {day.cards.map((card) => (
-            <PlanCardItem key={card.card_id} card={card} />
+            <PlanCardItem
+              key={card.card_id}
+              card={card}
+              onCheckIn={onCardCheckIn}
+              isFinalized={day.finalized}
+            />
           ))}
         </div>
       )}

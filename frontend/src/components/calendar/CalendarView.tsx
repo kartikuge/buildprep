@@ -1,11 +1,14 @@
 import { useMemo } from 'react'
 import { addDays, subDays, format, differenceInWeeks, parseISO } from 'date-fns'
 import { usePlan } from '../../hooks/usePlan'
+import { useCheckIn } from '../../hooks/useCheckIn'
+import { useConfidence } from '../../hooks/useConfidence'
 import { useUserStore } from '../../store/userStore'
 import { getStudyPhase } from '../../lib/constants'
 import { WeekOverview } from './WeekOverview'
 import { WeekNarrative } from './WeekNarrative'
 import { DayDetail } from './DayDetail'
+import { ConfidencePanel } from './ConfidencePanel'
 
 export function CalendarView() {
   const {
@@ -21,6 +24,8 @@ export function CalendarView() {
   } = useUserStore()
 
   const { data: plan, isLoading, error } = usePlan(userId, weekStart)
+  const checkIn = useCheckIn()
+  const { data: confidences = [] } = useConfidence(userId)
 
   const handlePrev = () => {
     if (!weekStart) return
@@ -76,6 +81,43 @@ export function CalendarView() {
   const selectedDayPlan = plan?.days.find(
     (d) => d.date === effectiveSelectedDay,
   )
+
+  const handleCardCheckIn = (
+    cardDate: string,
+    cardId: string,
+    status: 'DONE' | 'PARTIAL' | 'SKIPPED',
+    actualDuration?: number,
+  ) => {
+    if (!userId) return
+    checkIn.mutate({
+      userId,
+      date: cardDate,
+      data: {
+        cards: [{ card_id: cardId, status, actual_duration: actualDuration }],
+        finalize_day: false,
+      },
+    })
+  }
+
+  const handleFinalizeDay = (dayDate: string) => {
+    if (!userId || !plan) return
+    const day = plan.days.find((d) => d.date === dayDate)
+    if (!day) return
+
+    // Collect remaining PENDING cards as SKIPPED
+    const pendingCards = day.cards
+      .filter((c) => c.status === 'PENDING')
+      .map((c) => ({ card_id: c.card_id, status: 'SKIPPED' as const }))
+
+    checkIn.mutate({
+      userId,
+      date: dayDate,
+      data: {
+        cards: pendingCards,
+        finalize_day: true,
+      },
+    })
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -176,14 +218,15 @@ export function CalendarView() {
 
         {plan && (
           <div className="flex gap-5">
-            {/* Left column — Schedule Insights + Reschedule */}
+            {/* Left column — Schedule Insights + Confidence */}
             <div className="w-72 flex-shrink-0">
-              <div className="sticky top-6">
+              <div className="sticky top-6 space-y-4">
                 <WeekNarrative
                   narrative={plan.narrative}
                   days={plan.days}
                   phase={phase}
                 />
+                <ConfidencePanel confidences={confidences} />
               </div>
             </div>
 
@@ -194,7 +237,16 @@ export function CalendarView() {
                 selectedDay={effectiveSelectedDay}
                 onSelectDay={setSelectedDay}
               />
-              {selectedDayPlan && <DayDetail day={selectedDayPlan} />}
+              {selectedDayPlan && (
+                <DayDetail
+                  day={selectedDayPlan}
+                  onCardCheckIn={(cardId, status, actualDuration) =>
+                    handleCardCheckIn(selectedDayPlan.date, cardId, status, actualDuration)
+                  }
+                  onFinalizeDay={() => handleFinalizeDay(selectedDayPlan.date)}
+                  isCheckingIn={checkIn.isPending}
+                />
+              )}
             </div>
           </div>
         )}

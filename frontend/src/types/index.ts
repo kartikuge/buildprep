@@ -84,3 +84,34 @@ export interface ExamCycle {
   prelimsDate: string
   mainsDate: string
 }
+
+export type CheckInStatus = 'PENDING' | 'DONE' | 'PARTIAL' | 'SKIPPED'
+
+export interface CardCheckIn {
+  card_id: string
+  status: 'DONE' | 'PARTIAL' | 'SKIPPED'
+  actual_duration?: number
+}
+
+export interface CheckInRequest {
+  cards: CardCheckIn[]
+  finalize_day: boolean
+}
+
+export interface CheckInResponse {
+  date: string
+  finalized: boolean
+  cards_updated: number
+  confidences_updated: string[]
+}
+
+export interface TopicConfidence {
+  user_id: string
+  subject: Subject
+  perceived_confidence: number
+  streak: number
+  skip_count: number
+  total_sessions: number
+  last_practiced_date: string | null
+  milestones_awarded: string[]
+}
