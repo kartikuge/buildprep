@@ -867,3 +867,146 @@ def test_integration_day2_independent_of_day1(client, memory_storage):
     )
     assert resp.status_code == 200
     assert resp.json()["finalized"] is False
+
+
+# ── Rebalance Tests ──────────────────────────────────────────────────
+
+
+def _setup_rebalance_week(memory_storage, user_id="reb1"):
+    """Create a user with a full 7-day plan for rebalance tests."""
+    from datetime import timedelta
+
+    profile = UserProfile(
+        user_id=user_id,
+        display_name="Rebalance User",
+        stage="both",
+        prelims_date=date(2026, 5, 25),
+        mains_date=date(2026, 9, 19),
+        available_hours_per_day=6.0,
+    )
+    memory_storage.save_user_profile(profile)
+
+    week_start = date(2026, 3, 9)  # Monday
+    days = []
+    for i in range(7):
+        day_date = week_start + timedelta(days=i)
+        cards = [
+            PlanCard(
+                card_id=f"d{i}-history",
+                block_type=BlockType.DEEP_STUDY,
+                category=BlockCategory.CORE_LEARNING,
+                subject=Subject.HISTORY,
+                topic=f"Topic {i}",
+                planned_duration=90,
+                fatigue=2,
+                order=0,
+            ),
+            PlanCard(
+                card_id=f"d{i}-news",
+                block_type=BlockType.NEWS_READING,
+                category=BlockCategory.INPUT,
+                subject=None,
+                topic=None,
+                planned_duration=20,
+                fatigue=0,
+                order=1,
+            ),
+        ]
+        days.append(DailyPlan(date=day_date, cards=cards))
+
+    plan = WeeklyPlan(
+        user_id=user_id,
+        week_start=week_start,
+        days=days,
+        narrative="Rebalance test week.",
+    )
+    memory_storage.save_weekly_plan(plan)
+    return profile, plan
+
+
+def test_rebalance_user_not_found(client):
+    resp = client.post(
+        "/api/users/nobody/plan/rebalance",
+        json={"week_start": "2026-03-09", "recovery_window_days": 3},
+    )
+    assert resp.status_code == 404
+
+
+def test_rebalance_plan_not_found(client, memory_storage):
+    profile = UserProfile(
+        user_id="reb_noplan",
+        display_name="No Plan",
+        stage="prelims",
+        prelims_date=date(2026, 5, 25),
+        available_hours_per_day=4.0,
+    )
+    memory_storage.save_user_profile(profile)
+
+    resp = client.post(
+        "/api/users/reb_noplan/plan/rebalance",
+        json={"week_start": "2026-03-09", "recovery_window_days": 3},
+    )
+    assert resp.status_code == 404
+
+
+def test_rebalance_invalid_window(client, memory_storage):
+    """Recovery window outside 1-7 should fail validation."""
+    _setup_rebalance_week(memory_storage, "reb_inv")
+
+    resp = client.post(
+        "/api/users/reb_inv/plan/rebalance",
+        json={"week_start": "2026-03-09", "recovery_window_days": 0},
+    )
+    assert resp.status_code == 422
+
+    resp = client.post(
+        "/api/users/reb_inv/plan/rebalance",
+        json={"week_start": "2026-03-09", "recovery_window_days": 8},
+    )
+    assert resp.status_code == 422
+
+
+@patch("preptrack.api.routes.rebalance_plan")
+def test_rebalance_success(mock_rebalance, client, memory_storage):
+    """Successful rebalance returns correct response shape."""
+    profile, plan = _setup_rebalance_week(memory_storage, "reb_ok")
+
+    # Mock rebalance_plan to return updated plan with recovery info
+    mock_rebalance.return_value = (
+        plan,  # return same plan (in real case it'd be modified)
+        [date(2026, 3, 10), date(2026, 3, 11)],  # missed dates
+        [date(2026, 3, 12), date(2026, 3, 13), date(2026, 3, 14)],  # recovery dates
+    )
+
+    resp = client.post(
+        "/api/users/reb_ok/plan/rebalance",
+        json={"week_start": "2026-03-09", "recovery_window_days": 3},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["missed_dates"] == ["2026-03-10", "2026-03-11"]
+    assert body["recovery_dates"] == ["2026-03-12", "2026-03-13", "2026-03-14"]
+    assert body["error"] is None
+
+    # Recovery state should be saved
+    rs = memory_storage.get_recovery_state("reb_ok")
+    assert rs is not None
+    assert rs.recovery_window_days == 3
+
+
+@patch("preptrack.api.routes.rebalance_plan")
+def test_rebalance_failure_returns_error(mock_rebalance, client, memory_storage):
+    """PlanGenerationError during rebalance returns success=false with error message."""
+    _setup_rebalance_week(memory_storage, "reb_fail")
+
+    mock_rebalance.side_effect = PlanGenerationError("All retries exhausted")
+
+    resp = client.post(
+        "/api/users/reb_fail/plan/rebalance",
+        json={"week_start": "2026-03-09", "recovery_window_days": 3},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is False
+    assert "All retries exhausted" in body["error"]
