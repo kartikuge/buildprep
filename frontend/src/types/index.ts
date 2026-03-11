@@ -115,3 +115,16 @@ export interface TopicConfidence {
   last_practiced_date: string | null
   milestones_awarded: string[]
 }
+
+export interface RebalanceRequest {
+  week_start: string
+  recovery_window_days: number
+}
+
+export interface RebalanceResponse {
+  success: boolean
+  missed_dates: string[]
+  recovery_dates: string[]
+  total_cards_regenerated: number
+  error: string | null
+}

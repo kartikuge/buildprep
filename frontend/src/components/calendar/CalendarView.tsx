@@ -1,8 +1,9 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { addDays, subDays, format, differenceInWeeks, parseISO } from 'date-fns'
 import { usePlan } from '../../hooks/usePlan'
 import { useCheckIn } from '../../hooks/useCheckIn'
 import { useConfidence } from '../../hooks/useConfidence'
+import { useRebalance } from '../../hooks/useRebalance'
 import { useUserStore } from '../../store/userStore'
 import { getStudyPhase } from '../../lib/constants'
 import { WeekOverview } from './WeekOverview'
@@ -26,6 +27,10 @@ export function CalendarView() {
   const { data: plan, isLoading, error } = usePlan(userId, weekStart)
   const checkIn = useCheckIn()
   const { data: confidences = [] } = useConfidence(userId)
+  const rebalance = useRebalance()
+  const [showRebalance, setShowRebalance] = useState(false)
+  const [recoveryDays, setRecoveryDays] = useState(3)
+  const [rebalanceError, setRebalanceError] = useState<string | null>(null)
 
   const handlePrev = () => {
     if (!weekStart) return
@@ -99,6 +104,54 @@ export function CalendarView() {
     })
   }
 
+  // Rebalance eligibility: count missed and eligible days
+  const { missedCount, eligibleCount } = useMemo(() => {
+    if (!plan) return { missedCount: 0, eligibleCount: 0 }
+    const today = format(new Date(), 'yyyy-MM-dd')
+    let missed = 0
+    let eligible = 0
+    for (const day of plan.days) {
+      const statuses = new Set(day.cards.map((c) => c.status))
+      const hasEngagement = statuses.has('DONE') || statuses.has('PARTIAL')
+      if (hasEngagement) continue
+      if (day.date < today) {
+        missed++
+      } else {
+        eligible++
+      }
+    }
+    return { missedCount: missed, eligibleCount: eligible }
+  }, [plan])
+
+  const canRebalance = missedCount > 0 && eligibleCount > 0
+
+  const handleRebalance = () => {
+    if (!userId || !weekStart) return
+    setRebalanceError(null)
+    rebalance.mutate(
+      {
+        userId,
+        data: {
+          week_start: weekStart,
+          recovery_window_days: recoveryDays,
+        },
+      },
+      {
+        onSuccess: (res) => {
+          if (!res.success) {
+            setRebalanceError(res.error || 'Rebalance failed')
+          } else {
+            setShowRebalance(false)
+            setRebalanceError(null)
+          }
+        },
+        onError: (err) => {
+          setRebalanceError(err instanceof Error ? err.message : 'Rebalance failed')
+        },
+      },
+    )
+  }
+
   const handleFinalizeDay = (dayDate: string) => {
     if (!userId || !plan) return
     const day = plan.days.find((d) => d.date === dayDate)
@@ -130,12 +183,63 @@ export function CalendarView() {
               </span>
             </div>
             <div className="flex items-center gap-3">
-              <button
-                disabled
-                className="px-3 py-1 rounded-lg border border-gray-200 text-xs text-gray-400 cursor-not-allowed"
-              >
-                Reschedule Week
-              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setShowRebalance(!showRebalance)}
+                  disabled={!canRebalance || rebalance.isPending}
+                  className={`px-3 py-1 rounded-lg border text-xs transition ${
+                    canRebalance && !rebalance.isPending
+                      ? 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                      : 'border-gray-200 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  {rebalance.isPending ? 'Rebalancing...' : 'Rebalance Week'}
+                </button>
+                {showRebalance && canRebalance && (
+                  <div className="absolute right-0 top-full mt-2 w-72 bg-white border border-gray-200 rounded-xl shadow-lg p-4 z-20">
+                    <p className="text-xs text-gray-500 mb-3">
+                      {missedCount} missed day{missedCount !== 1 ? 's' : ''} detected.
+                      Redistribute into upcoming days.
+                    </p>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                      Recovery window (days)
+                    </label>
+                    <input
+                      type="range"
+                      min={1}
+                      max={Math.min(eligibleCount, 7)}
+                      value={Math.min(recoveryDays, eligibleCount)}
+                      onChange={(e) => setRecoveryDays(Number(e.target.value))}
+                      className="w-full mb-1"
+                    />
+                    <div className="flex justify-between text-xs text-gray-400 mb-3">
+                      <span>1 day</span>
+                      <span className="font-medium text-gray-700">
+                        {Math.min(recoveryDays, eligibleCount)} day{Math.min(recoveryDays, eligibleCount) !== 1 ? 's' : ''}
+                      </span>
+                      <span>{Math.min(eligibleCount, 7)} days</span>
+                    </div>
+                    {rebalanceError && (
+                      <p className="text-xs text-red-600 mb-2">{rebalanceError}</p>
+                    )}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setShowRebalance(false); setRebalanceError(null) }}
+                        className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleRebalance}
+                        disabled={rebalance.isPending}
+                        className="flex-1 px-3 py-1.5 rounded-lg bg-amber-500 text-white text-xs font-medium hover:bg-amber-600 disabled:opacity-50"
+                      >
+                        {rebalance.isPending ? 'Working...' : 'Rebalance'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
               <span className="text-sm text-gray-400">
                 Hi, {displayName}
               </span>
