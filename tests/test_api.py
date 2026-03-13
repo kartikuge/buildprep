@@ -976,6 +976,7 @@ def test_rebalance_success(mock_rebalance, client, memory_storage):
         plan,  # return same plan (in real case it'd be modified)
         [date(2026, 3, 10), date(2026, 3, 11)],  # missed dates
         [date(2026, 3, 12), date(2026, 3, 13), date(2026, 3, 14)],  # recovery dates
+        "Redistributed History and Polity into Thu-Sat with lighter blocks.",  # narrative
     )
 
     resp = client.post(
@@ -988,6 +989,7 @@ def test_rebalance_success(mock_rebalance, client, memory_storage):
     assert body["missed_dates"] == ["2026-03-10", "2026-03-11"]
     assert body["recovery_dates"] == ["2026-03-12", "2026-03-13", "2026-03-14"]
     assert body["error"] is None
+    assert body["narrative"] == "Redistributed History and Polity into Thu-Sat with lighter blocks."
 
     # Recovery state should be saved
     rs = memory_storage.get_recovery_state("reb_ok")
