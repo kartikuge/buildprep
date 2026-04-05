@@ -69,6 +69,7 @@ export interface OnboardRequest {
   mains_date: string | null
   available_hours_per_day: number
   subject_confidences: Record<string, number>
+  debug_date?: string | null
 }
 
 export interface OnboardResponse {
@@ -119,6 +120,7 @@ export interface TopicConfidence {
 export interface RebalanceRequest {
   week_start: string
   recovery_window_days: number
+  debug_date?: string | null
 }
 
 export interface RebalanceResponse {
@@ -126,5 +128,6 @@ export interface RebalanceResponse {
   missed_dates: string[]
   recovery_dates: string[]
   total_cards_regenerated: number
+  narrative: string | null
   error: string | null
 }

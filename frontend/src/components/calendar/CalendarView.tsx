@@ -6,10 +6,12 @@ import { useConfidence } from '../../hooks/useConfidence'
 import { useRebalance } from '../../hooks/useRebalance'
 import { useUserStore } from '../../store/userStore'
 import { getStudyPhase } from '../../lib/constants'
+import { getTodayStr, getDebugDate } from '../../lib/debug'
 import { WeekOverview } from './WeekOverview'
 import { WeekNarrative } from './WeekNarrative'
 import { DayDetail } from './DayDetail'
 import { ConfidencePanel } from './ConfidencePanel'
+import { RebalanceInsight } from './RebalanceInsight'
 
 export function CalendarView() {
   const {
@@ -31,6 +33,8 @@ export function CalendarView() {
   const [showRebalance, setShowRebalance] = useState(false)
   const [recoveryDays, setRecoveryDays] = useState(3)
   const [rebalanceError, setRebalanceError] = useState<string | null>(null)
+  const [rebalanceNarrative, setRebalanceNarrative] = useState<string | null>(null)
+  const [rebalanceStep, setRebalanceStep] = useState<'config' | 'confirm'>('config')
 
   const handlePrev = () => {
     if (!weekStart) return
@@ -54,18 +58,20 @@ export function CalendarView() {
     )
   }, [weekStart, firstWeekStart])
 
+  const todayStr = getTodayStr()
+
   const phase = useMemo(() => {
     if (!prelimsDate) return 'Foundation'
-    const today = new Date()
+    const todayDate = new Date(todayStr + 'T00:00:00')
     const days = Math.max(
       0,
       Math.ceil(
-        (parseISO(prelimsDate).getTime() - today.getTime()) /
+        (parseISO(prelimsDate).getTime() - todayDate.getTime()) /
           (1000 * 60 * 60 * 24),
       ),
     )
     return getStudyPhase(days)
-  }, [prelimsDate])
+  }, [prelimsDate, todayStr])
 
   const daysCompleted = plan
     ? plan.days.filter((d) => d.finalized).length
@@ -78,10 +84,9 @@ export function CalendarView() {
       plan.days.some((d) => d.date === selectedDay)
     )
       return selectedDay
-    const today = format(new Date(), 'yyyy-MM-dd')
-    if (plan.days.some((d) => d.date === today)) return today
+    if (plan.days.some((d) => d.date === todayStr)) return todayStr
     return plan.days[0]?.date ?? null
-  }, [plan, selectedDay])
+  }, [plan, selectedDay, todayStr])
 
   const selectedDayPlan = plan?.days.find(
     (d) => d.date === effectiveSelectedDay,
@@ -105,35 +110,44 @@ export function CalendarView() {
   }
 
   // Rebalance eligibility: count missed and eligible days
+  // Missed = unfinalized past days with no engagement (content not yet dealt with)
+  // Finalized days (even all-skipped) are already closed out — don't re-rebalance
   const { missedCount, eligibleCount } = useMemo(() => {
     if (!plan) return { missedCount: 0, eligibleCount: 0 }
-    const today = format(new Date(), 'yyyy-MM-dd')
     let missed = 0
     let eligible = 0
     for (const day of plan.days) {
+      if (day.finalized) continue
       const statuses = new Set(day.cards.map((c) => c.status))
       const hasEngagement = statuses.has('DONE') || statuses.has('PARTIAL')
       if (hasEngagement) continue
-      if (day.date < today) {
+      if (day.date < todayStr) {
         missed++
       } else {
         eligible++
       }
     }
     return { missedCount: missed, eligibleCount: eligible }
-  }, [plan])
+  }, [plan, todayStr])
+
+  // Past days that are not finalized — will need auto-finalization before rebalance
+  // Includes partially done days (DONE/PARTIAL cards stay, remaining PENDING → SKIPPED)
+  const unfinalizedPastDays = useMemo(() => {
+    if (!plan) return []
+    return plan.days.filter((day) => day.date < todayStr && !day.finalized)
+  }, [plan, todayStr])
 
   const canRebalance = missedCount > 0 && eligibleCount > 0
 
-  const handleRebalance = () => {
+  const triggerRebalance = () => {
     if (!userId || !weekStart) return
-    setRebalanceError(null)
     rebalance.mutate(
       {
         userId,
         data: {
           week_start: weekStart,
           recovery_window_days: recoveryDays,
+          debug_date: getDebugDate(),
         },
       },
       {
@@ -143,6 +157,8 @@ export function CalendarView() {
           } else {
             setShowRebalance(false)
             setRebalanceError(null)
+            setRebalanceStep('config')
+            setRebalanceNarrative(res.narrative)
           }
         },
         onError: (err) => {
@@ -150,6 +166,46 @@ export function CalendarView() {
         },
       },
     )
+  }
+
+  const handleRebalance = () => {
+    if (!userId || !weekStart) return
+    setRebalanceError(null)
+
+    // If there are unfinalized past days, show confirmation step first
+    if (unfinalizedPastDays.length > 0 && rebalanceStep === 'config') {
+      setRebalanceStep('confirm')
+      return
+    }
+
+    // Finalize unfinalized past days first, then trigger rebalance
+    if (unfinalizedPastDays.length > 0) {
+      let remaining = unfinalizedPastDays.length
+      for (const day of unfinalizedPastDays) {
+        const pendingCards = day.cards
+          .filter((c) => c.status === 'PENDING')
+          .map((c) => ({ card_id: c.card_id, status: 'SKIPPED' as const }))
+
+        checkIn.mutate(
+          {
+            userId,
+            date: day.date,
+            data: { cards: pendingCards, finalize_day: true },
+          },
+          {
+            onSuccess: () => {
+              remaining--
+              if (remaining === 0) triggerRebalance()
+            },
+            onError: (err) => {
+              setRebalanceError(err instanceof Error ? err.message : 'Failed to finalize days')
+            },
+          },
+        )
+      }
+    } else {
+      triggerRebalance()
+    }
   }
 
   const handleFinalizeDay = (dayDate: string) => {
@@ -197,49 +253,86 @@ export function CalendarView() {
                 </button>
                 {showRebalance && canRebalance && (
                   <div className="absolute right-0 top-full mt-2 w-72 bg-white border border-gray-200 rounded-xl shadow-lg p-4 z-20">
-                    <p className="text-xs text-gray-500 mb-3">
-                      {missedCount} missed day{missedCount !== 1 ? 's' : ''} detected.
-                      Redistribute into upcoming days.
-                    </p>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">
-                      Recovery window (days)
-                    </label>
-                    <input
-                      type="range"
-                      min={1}
-                      max={Math.min(eligibleCount, 7)}
-                      value={Math.min(recoveryDays, eligibleCount)}
-                      onChange={(e) => setRecoveryDays(Number(e.target.value))}
-                      className="w-full mb-1"
-                    />
-                    <div className="flex justify-between text-xs text-gray-400 mb-3">
-                      <span>1 day</span>
-                      <span className="font-medium text-gray-700">
-                        {Math.min(recoveryDays, eligibleCount)} day{Math.min(recoveryDays, eligibleCount) !== 1 ? 's' : ''}
-                      </span>
-                      <span>{Math.min(eligibleCount, 7)} days</span>
-                    </div>
-                    {rebalanceError && (
-                      <p className="text-xs text-red-600 mb-2">{rebalanceError}</p>
+                    {rebalanceStep === 'confirm' && unfinalizedPastDays.length > 0 ? (
+                      <>
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-amber-500 text-sm">⚠</span>
+                          <span className="text-xs font-semibold text-gray-900">Confirm skip</span>
+                        </div>
+                        <p className="text-xs text-gray-500 mb-3">
+                          {unfinalizedPastDays.length} past day{unfinalizedPastDays.length !== 1 ? 's' : ''} ({unfinalizedPastDays.map((d) => format(new Date(d.date + 'T00:00:00'), 'EEE d')).join(', ')}) will be marked as <span className="font-medium text-gray-700">skipped</span> before rebalancing.
+                        </p>
+                        {rebalanceError && (
+                          <p className="text-xs text-red-600 mb-2">{rebalanceError}</p>
+                        )}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setRebalanceStep('config')}
+                            className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50"
+                          >
+                            Back
+                          </button>
+                          <button
+                            onClick={handleRebalance}
+                            disabled={rebalance.isPending || checkIn.isPending}
+                            className="flex-1 px-3 py-1.5 rounded-lg bg-amber-500 text-white text-xs font-medium hover:bg-amber-600 disabled:opacity-50"
+                          >
+                            {rebalance.isPending || checkIn.isPending ? 'Working...' : 'Skip & Rebalance'}
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-xs text-gray-500 mb-3">
+                          {missedCount} missed day{missedCount !== 1 ? 's' : ''} detected.
+                          Redistribute into upcoming days.
+                        </p>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Recovery window (days)
+                        </label>
+                        <input
+                          type="range"
+                          min={1}
+                          max={Math.min(eligibleCount, 7)}
+                          value={Math.min(recoveryDays, eligibleCount)}
+                          onChange={(e) => setRecoveryDays(Number(e.target.value))}
+                          className="w-full mb-1"
+                        />
+                        <div className="flex justify-between text-xs text-gray-400 mb-3">
+                          <span>1 day</span>
+                          <span className="font-medium text-gray-700">
+                            {Math.min(recoveryDays, eligibleCount)} day{Math.min(recoveryDays, eligibleCount) !== 1 ? 's' : ''}
+                          </span>
+                          <span>{Math.min(eligibleCount, 7)} days</span>
+                        </div>
+                        {rebalanceError && (
+                          <p className="text-xs text-red-600 mb-2">{rebalanceError}</p>
+                        )}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => { setShowRebalance(false); setRebalanceError(null); setRebalanceStep('config') }}
+                            className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={handleRebalance}
+                            disabled={rebalance.isPending}
+                            className="flex-1 px-3 py-1.5 rounded-lg bg-amber-500 text-white text-xs font-medium hover:bg-amber-600 disabled:opacity-50"
+                          >
+                            {rebalance.isPending ? 'Working...' : 'Rebalance'}
+                          </button>
+                        </div>
+                      </>
                     )}
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => { setShowRebalance(false); setRebalanceError(null) }}
-                        className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={handleRebalance}
-                        disabled={rebalance.isPending}
-                        className="flex-1 px-3 py-1.5 rounded-lg bg-amber-500 text-white text-xs font-medium hover:bg-amber-600 disabled:opacity-50"
-                      >
-                        {rebalance.isPending ? 'Working...' : 'Rebalance'}
-                      </button>
-                    </div>
                   </div>
                 )}
               </div>
+              {getDebugDate() && (
+                <span className="text-[10px] font-mono text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded">
+                  debug: {todayStr}
+                </span>
+              )}
               <span className="text-sm text-gray-400">
                 Hi, {displayName}
               </span>
@@ -256,7 +349,7 @@ export function CalendarView() {
               Week {weekNumber}
             </h1>
             <span className="text-sm text-gray-500">
-              {daysCompleted}/7 days done
+              {daysCompleted}/{plan?.days.length ?? 7} days done
             </span>
           </div>
           <div className="flex items-center justify-center gap-4 mt-3">
@@ -325,6 +418,12 @@ export function CalendarView() {
             {/* Left column — Schedule Insights + Confidence */}
             <div className="w-72 flex-shrink-0">
               <div className="sticky top-6 space-y-4">
+                {rebalanceNarrative && (
+                  <RebalanceInsight
+                    narrative={rebalanceNarrative}
+                    onDismiss={() => setRebalanceNarrative(null)}
+                  />
+                )}
                 <WeekNarrative
                   narrative={plan.narrative}
                   days={plan.days}
@@ -340,6 +439,7 @@ export function CalendarView() {
                 days={plan.days}
                 selectedDay={effectiveSelectedDay}
                 onSelectDay={setSelectedDay}
+                todayStr={todayStr}
               />
               {selectedDayPlan && (
                 <DayDetail

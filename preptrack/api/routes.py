@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from preptrack.agent.exceptions import PlanGenerationError
 from preptrack.agent.planner import generate_plan
+from preptrack.agent.rebalancer import rebalance_plan
 from preptrack.api.deps import get_storage
 from preptrack.api.schemas import (
     CheckInRequest,
@@ -12,6 +13,8 @@ from preptrack.api.schemas import (
     GeneratePlanRequest,
     OnboardRequest,
     OnboardResponse,
+    RebalanceRequest,
+    RebalanceResponse,
 )
 from preptrack.engine.confidence import process_checkin
 from preptrack.kb.confidence import CONFIDENCE_CONFIG
@@ -19,6 +22,7 @@ from preptrack.models.enums import CheckInStatus, Subject
 from preptrack.models.user import (
     ActivityLogEntry,
     DayActivity,
+    RecoveryState,
     TopicConfidence,
     UserProfile,
 )
@@ -59,7 +63,11 @@ def onboard(req: OnboardRequest, storage: StorageBackend = Depends(get_storage))
     plan_dict = None
     plan_error = None
     try:
-        plan = generate_plan(profile=profile, confidences=confidences)
+        plan = generate_plan(
+            profile=profile,
+            confidences=confidences,
+            plan_start=req.debug_date,
+        )
         storage.save_weekly_plan(plan)
         plan_dict = plan.model_dump(mode="json")
     except PlanGenerationError as e:
@@ -120,6 +128,7 @@ def generate_new_plan(
             profile=profile,
             confidences=confidences,
             week_start=req.week_start,
+            plan_start=req.debug_date,
         )
     except PlanGenerationError as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -235,6 +244,66 @@ def checkin(
         finalized=daily.finalized,
         cards_updated=cards_updated,
         confidences_updated=confidences_updated,
+    )
+
+
+@router.post("/users/{user_id}/plan/rebalance", response_model=RebalanceResponse)
+def rebalance(
+    user_id: str,
+    req: RebalanceRequest,
+    storage: StorageBackend = Depends(get_storage),
+):
+    profile = storage.get_user_profile(user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    plan = storage.get_weekly_plan(user_id, req.week_start)
+    if not plan:
+        raise HTTPException(status_code=404, detail="No plan found for this week")
+
+    confidences = storage.get_topic_confidences(user_id)
+
+    try:
+        updated_plan, missed_dates, recovery_dates, narrative = rebalance_plan(
+            plan=plan,
+            profile=profile,
+            confidences=confidences,
+            recovery_window_days=req.recovery_window_days,
+            today=req.debug_date,
+        )
+    except PlanGenerationError as e:
+        return RebalanceResponse(
+            success=False,
+            missed_dates=[],
+            recovery_dates=[],
+            total_cards_regenerated=0,
+            error=str(e),
+        )
+
+    storage.save_weekly_plan(updated_plan)
+
+    # Save recovery state for audit trail
+    recovery_state = RecoveryState(
+        user_id=user_id,
+        missed_dates=missed_dates,
+        recovery_window_days=req.recovery_window_days,
+    )
+    storage.save_recovery_state(recovery_state)
+
+    # Count cards in recovery days
+    recovery_date_set = set(recovery_dates)
+    total_cards = sum(
+        len(d.cards)
+        for d in updated_plan.days
+        if d.date in recovery_date_set
+    )
+
+    return RebalanceResponse(
+        success=True,
+        missed_dates=[d.isoformat() for d in missed_dates],
+        recovery_dates=[d.isoformat() for d in recovery_dates],
+        total_cards_regenerated=total_cards,
+        narrative=narrative,
     )
 
 

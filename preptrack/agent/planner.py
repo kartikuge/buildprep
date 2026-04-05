@@ -226,16 +226,31 @@ def _repair_r13(plan: WeeklyPlan) -> WeeklyPlan:
     return plan
 
 
+def _monday_of_week(d: date) -> date:
+    """Return the Monday of the week containing d."""
+    return d - timedelta(days=d.weekday())
+
+
+def _sunday_of_week(d: date) -> date:
+    """Return the Sunday of the week containing d."""
+    return d + timedelta(days=6 - d.weekday())
+
+
 def generate_plan(
     profile: UserProfile,
     confidences: list[TopicConfidence],
     week_start: date | None = None,
+    plan_start: date | None = None,
     previous_phase: Phase | None = None,
     days_in_phase: int = 30,
     model_id: str = "us.amazon.nova-2-lite-v1:0",
     region: str = "us-east-1",
 ) -> WeeklyPlan:
     """Generate a validated weekly study plan.
+
+    If plan_start is provided, generates from that date to Sunday of the same week.
+    This supports mid-week onboarding (e.g. onboard on Wednesday → generate Wed-Sun).
+    week_start is always Monday (storage key).
 
     1. Compute deterministic context (phase, budgets, priorities)
     2. Build prompt with KB context
@@ -246,9 +261,18 @@ def generate_plan(
 
     Raises PlanGenerationError if all retries exhausted.
     """
-    today = date.today()
+    today = plan_start or date.today()
+
     if week_start is None:
-        week_start = _next_monday(today)
+        week_start = _monday_of_week(today)
+
+    # Compute the actual dates to generate (today through Sunday)
+    week_end = _sunday_of_week(today)
+    plan_dates = []
+    d = today
+    while d <= week_end:
+        plan_dates.append(d)
+        d += timedelta(days=1)
 
     # 1. Deterministic pre-computation
     phase, category_budgets, subject_priorities = _compute_context(
@@ -290,6 +314,7 @@ def generate_plan(
             subject_priorities=subject_priorities,
             kb_context=kb_context,
             week_start=week_start,
+            plan_dates=plan_dates,
             violations=violations,
         )
 

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { MAINS_SUBJECTS, EXAM_CYCLES } from '../../lib/constants'
+import { getDebugDate } from '../../lib/debug'
 import { useOnboard } from '../../hooks/useOnboard'
 import { useUserStore } from '../../store/userStore'
 import { ProgressDots } from './ProgressDots'
@@ -46,6 +47,7 @@ export function OnboardingWizard() {
       mains_date: cycle?.mainsDate ?? null,
       available_hours_per_day: hours,
       subject_confidences: confidences,
+      debug_date: getDebugDate(),
     }
 
     mutate(payload, {

@@ -12,6 +12,7 @@ class OnboardRequest(BaseModel):
     mains_date: date | None = None
     available_hours_per_day: float = Field(gt=0, le=16)
     subject_confidences: dict[str, float] = Field(default_factory=dict)
+    debug_date: date | None = None
 
 
 class OnboardResponse(BaseModel):
@@ -23,6 +24,7 @@ class OnboardResponse(BaseModel):
 
 class GeneratePlanRequest(BaseModel):
     week_start: date | None = None
+    debug_date: date | None = None
 
 
 class CardCheckIn(BaseModel):
@@ -41,3 +43,18 @@ class CheckInResponse(BaseModel):
     finalized: bool
     cards_updated: int
     confidences_updated: list[str]
+
+
+class RebalanceRequest(BaseModel):
+    week_start: date
+    recovery_window_days: int = Field(ge=1, le=7)
+    debug_date: date | None = None
+
+
+class RebalanceResponse(BaseModel):
+    success: bool
+    missed_dates: list[str]
+    recovery_dates: list[str]
+    total_cards_regenerated: int
+    narrative: str | None = None
+    error: str | None = None

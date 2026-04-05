@@ -21,6 +21,7 @@ Stack: Strands + Amazon Nova 2 Lite (Bedrock), Nova Act, React, DynamoDB, Cognit
 - [x] Phase D (Engine tuning): NEWS/CA fixes, fatigue correction, R09 expansion, R21 validator. 193 tests passing
 - [x] Phase D (UI polish): Two-column calendar layout, 7-day grid (no scroll), reschedule in header, mark complete inline with date. CSAT added to confidence step.
 - [x] Phase E: Check-in + Confidence scoring — card-by-card Done/Partial/Skip, day finalization, deterministic confidence updates, confidence panel. 216 tests passing.
+- [x] Phase F.1: Rebalancing agent + mid-week plans + debug dates — rebalancer backend, rebalance UI, narrative/insight panel, debug date system. 237 tests passing.
 
 ### Remaining — Reworked Build Phases
 
@@ -32,7 +33,7 @@ Stack: Strands + Amazon Nova 2 Lite (Bedrock), Nova Act, React, DynamoDB, Cognit
 | **D** | Onboarding + Calendar UI — React frontend. Onboarding form, daily calendar cards, weekly progress bars | 2-3 | Can start parallel with C |
 | **E** | Check-in + Confidence scoring — Done/partial/skip per card. Deterministic confidence updates (arithmetic, no AI) | 1-2 | D |
 | **F** | Rebalancing agent — Recovery window selector → Strands agent reprioritizes → engine validates | 2 | A, C, E |
-| **G** | Auto-generation — On week completion, fetch learning profile, generate next batch via Phase C pipeline | 1 | C, E |
+| **G** | Multi-week generation + auto-generation + cross-week rebalance (see Phase G Plan below) | 2 | C, E, F |
 | **H** | AWS deployment — DynamoStore adapter (swap local JSON → DynamoDB), Lambda functions, Amplify frontend, Cognito auth | 2-3 | All above |
 | **I** | Nova Act + Polish — Exam date fetch, loading states, demo flow | 1-2 | Cut if behind |
 
@@ -140,6 +141,57 @@ Tests: 216 passing (was 193). Breakdown of new tests:
 - 7 API-level integration tests (full-day flow, cross-day confidence accumulation, skip→done streak reset, batch check-in, activity log, upsert dedup, day independence)
 - 5 DynamoDB integration tests in `test_storage.py` (card status persistence, finalize round-trip, confidence upsert, multi-subject independence, activity log entries)
 
+### 2026-03-10 — Phase F.1: Rebalancing Agent + Mid-Week Plans + Debug Dates
+
+**Rebalancing agent** (`preptrack/agent/rebalancer.py`):
+- Day classification: frozen (DONE/PARTIAL engagement), missed (past or finalized with no engagement), eligible (today+ unfrozen).
+- Missed content extracted as subject-level summary (not card-by-card) to prevent LLM overstuffing.
+- Fatigue carryover: counts consecutive heavy frozen days before recovery window for R13 enforcement.
+- CA Integration count from frozen days for R21 enforcement.
+- LLM proposes recovery days → deterministic fatigue correction → R13 repair → full-week validation → retry loop (max 3).
+- Returns narrative/summary alongside the rebalanced plan.
+
+**Rebalance prompt** (`preptrack/agent/prompt.py`):
+- `build_rebalance_prompt()` with recovery-specific context: missed content summary, frozen day constraints, fatigue cap as hard ceiling.
+- Output schema includes `"narrative"` field for AI-generated rebalance insight.
+
+**Mid-week plan generation** (`preptrack/agent/planner.py`):
+- `generate_plan()` accepts `plan_start: date | None` — generates from that date to Sunday (1-7 days).
+- Plans still keyed by Monday in storage for consistent week lookup.
+
+**Debug date system** (`frontend/src/lib/debug.ts`):
+- `?debug_date=YYYY-MM-DD` query param overrides "today" throughout the entire stack.
+- `getToday()`, `getTodayStr()`, `getDebugDate()` helpers used by all components.
+- Debug badge shown in header when active. Flows through API calls to backend.
+
+**API** (`preptrack/api/routes.py`, `schemas.py`):
+- `POST /users/{user_id}/plan/rebalance` — accepts `RebalanceRequest(week_start, recovery_window_days, debug_date)`, returns `RebalanceResponse` with `narrative`.
+- Onboard + Generate endpoints accept `debug_date` and pass as `plan_start`.
+
+**Frontend**:
+- Rebalance button in header (amber theme, dropdown with recovery window slider 1-7 days).
+- `RebalanceInsight` component — amber-bordered card with AI badge at top of left sidebar, dismissable.
+- `WeekOverview` uses `todayStr` prop for debug-aware today highlighting.
+- Rebalance eligibility: `missedCount > 0 && eligibleCount > 0`.
+
+**New files**: `rebalancer.py`, `RebalanceInsight.tsx`, `debug.ts`, `api/rebalance.ts`, `hooks/useRebalance.ts`, `hooks/useConfidence.ts`, `ConfidencePanel.tsx`, `test_rebalancer.py`, `test_rebalancer_integration.py`.
+
+**Tests**: 237 passing (16 rebalancer unit, 5 rebalancer API, 11 integration tests).
+
+### 2026-03-12 — Phase F.1 Polish: Timezone Fix, Auto-Finalization, Rebalance Eligibility
+
+**Timezone fix** (`frontend/src/lib/debug.ts`):
+- `getTodayStr()` was using `toISOString().slice(0, 10)` which converts to UTC — could disagree with backend's `date.today()` (local time) near midnight. Fixed to use `getFullYear()/getMonth()/getDate()` (local time). Frontend and backend now consistently use local timezone.
+
+**Rebalance auto-finalization** (`CalendarView.tsx`):
+- Before rebalancing, any past unfinalized days are detected — including partially done days (some DONE/PARTIAL cards but not "Mark Complete"d).
+- Two-step flow: user clicks "Rebalance" → if unfinalized past days exist, a confirmation step warns which days (e.g. "Mon 9, Tue 10") will be marked as skipped → user clicks "Skip & Rebalance" to confirm → app finalizes each day (PENDING cards → SKIPPED, DONE/PARTIAL untouched) → then triggers rebalance.
+- If all past days are already finalized, rebalance triggers directly (no extra step).
+
+**Rebalance eligibility fix** (`CalendarView.tsx`):
+- Bug: after a successful rebalance, the "Rebalance Week" button stayed active because finalized-skipped days (e.g. days closed by the auto-finalization) still counted as "missed" in `missedCount`.
+- Fix: `missedCount` now only counts **unfinalized** past days with no engagement. Finalized days (whether completed or all-skipped after rebalance) are considered closed — their content has already been dealt with. After a successful rebalance, `missedCount` drops to 0 and the button disables.
+
 ---
 
 ## Decisions Log
@@ -202,6 +254,78 @@ Tests: 216 passing (was 193). Breakdown of new tests:
 - System prompt is static (agent personality/rules), user prompt is dynamic (built per request by app code)
 - Frontend stack: Vite, React+TS, Tailwind, shadcn/ui, Zustand, TanStack Query
 - DB strategy: local JSON first, DynamoDB later via storage abstraction
+
+---
+
+## Phase G Plan: Multi-Week Generation + Auto-Generation + Cross-Week Rebalance
+
+### Context
+
+Phases A–F.1 complete. The system generates a single week, supports check-in, confidence tracking, and within-week rebalancing. Phase G adds forward-looking scheduling and cross-week recovery.
+
+### Three Sub-Features
+
+**G.1 — Manual multi-week generation (current + 2 weeks ahead)**
+- "Generate Ahead" button in the calendar UI
+- User can generate up to 2 additional weeks beyond the current week
+- Each week is a separate `WeeklyPlan` in storage, keyed by its Monday
+- Generation uses latest confidence scores + completion history from prior weeks
+- UI shows how many weeks exist vs available (e.g. "1/3 weeks generated")
+- If a week already exists, skip it (don't regenerate)
+- Week navigation (prev/next) works as-is — storage lookup by Monday, no changes needed
+
+**G.2 — Auto-generation on second-to-last day**
+- Frontend-driven `useEffect` check — no backend cron
+- When `todayStr` is the second-to-last day of the current week's plan AND next week doesn't exist → auto-generate
+- Show a banner/toast: "Next week is approaching — generating your schedule"
+- Uses the same `generate_plan` pipeline with fresh confidence data
+
+**G.3 — Cross-week rebalance**
+- Current-week rebalance stays exactly as-is (recovery window within the week)
+- New options in the rebalance dropdown:
+  - **"Include next week"** — rebalance current week as normal, then generate next week fresh with missed content as priority context
+  - **"Include next 2 weeks"** — same, generates up to 2 additional weeks
+- Cross-week "rebalance" for next week(s) = **full generation via planner** (not the rebalancer re-slotting cards). The rebalancer only touches the current week.
+- Each additional week is validated independently (per-week validation, no cross-week rule merging)
+- No partial next-week recovery windows — each added week is generated in full. Partial next-week generation is a future enhancement.
+
+### Key Design Decision: Missed Context
+
+The planner gets a new optional parameter: `missed_context: dict[Subject, int]` (subject → total missed minutes from current week). This flows into the prompt as a priority hint: "the user fell behind on these subjects, prioritize accordingly." The planner weights those subjects higher in generation. This is lighter than passing raw missed cards — just subject-level summary.
+
+### Backend Changes
+
+| File | Change |
+|------|--------|
+| `planner.py` | `generate_plan()` accepts optional `missed_context: dict[Subject, int]`. Passed to prompt builder. |
+| `prompt.py` | `build_plan_prompt()` accepts optional `missed_context`. Adds a "Priority Recovery" section to the prompt listing subjects + missed minutes. |
+| `routes.py` | New `POST /users/{user_id}/plan/generate-ahead` — accepts `GenerateAheadRequest(weeks_ahead, debug_date)`. Generates up to N weeks ahead, skipping existing. Returns list of week_starts generated. |
+| `routes.py` | Update rebalance endpoint — accept `include_next_weeks: int` (0, 1, or 2). After current-week rebalance, generate next week(s) via planner with `missed_context` extracted from current week's missed days. |
+| `schemas.py` | `GenerateAheadRequest(weeks_ahead: int, debug_date?)`, `GenerateAheadResponse(weeks_generated: list[str])` |
+| `schemas.py` | Add `include_next_weeks: int = 0` to `RebalanceRequest` |
+| `rebalancer.py` | Add helper to extract `missed_context` from missed days (subject → total minutes). Exported for use by routes. |
+
+### Frontend Changes
+
+| File | Change |
+|------|--------|
+| `types/index.ts` | `GenerateAheadRequest`, `GenerateAheadResponse` types. Add `include_next_weeks` to `RebalanceRequest`. |
+| `api/` | New `generateAhead()` API call |
+| `hooks/` | New `useGenerateAhead()` mutation hook |
+| `CalendarView.tsx` | "Generate Ahead" button. Auto-generation `useEffect` on second-to-last day. Rebalance dropdown gets "Include next week" / "Include next 2 weeks" toggle. Banner for auto-generation. |
+
+### Build Order
+
+| Step | What |
+|------|------|
+| 1 | Backend: add `missed_context` param to `generate_plan` + `build_plan_prompt` |
+| 2 | Backend: add `generate-ahead` endpoint |
+| 3 | Backend: update rebalance endpoint for `include_next_weeks` |
+| 4 | Backend: extract `missed_context` helper in rebalancer |
+| 5 | Tests: generate-ahead, cross-week rebalance |
+| 6 | Frontend: "Generate Ahead" button + API hook |
+| 7 | Frontend: auto-generation `useEffect` + banner |
+| 8 | Frontend: rebalance dropdown cross-week toggle |
 
 ---
 

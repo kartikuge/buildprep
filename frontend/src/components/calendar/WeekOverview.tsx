@@ -1,4 +1,4 @@
-import { format, parseISO, isToday } from 'date-fns'
+import { format, parseISO } from 'date-fns'
 import type { DailyPlan } from '../../types'
 import { SUBJECT_INFO } from '../../lib/constants'
 import type { Subject } from '../../types'
@@ -7,15 +7,16 @@ interface Props {
   days: DailyPlan[]
   selectedDay: string | null
   onSelectDay: (date: string) => void
+  todayStr: string
 }
 
-export function WeekOverview({ days, selectedDay, onSelectDay }: Props) {
+export function WeekOverview({ days, selectedDay, onSelectDay, todayStr }: Props) {
   return (
     <div className="grid grid-cols-7 gap-1.5">
       {days.map((day) => {
         const dateObj = parseISO(day.date)
         const isSelected = selectedDay === day.date
-        const today = isToday(dateObj)
+        const today = day.date === todayStr
         const totalMinutes = day.cards.reduce(
           (sum, c) => sum + c.planned_duration,
           0,
