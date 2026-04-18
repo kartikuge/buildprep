@@ -117,6 +117,21 @@ def compute_fatigue_carryover(frozen_days: list[DailyPlan], recovery_start: date
     return consecutive
 
 
+def extract_missed_context(missed_days: list[DailyPlan]) -> dict[str, int]:
+    """Extract subject-level missed minutes from missed days.
+
+    Returns dict of Subject value → total missed minutes.
+    Used by cross-week rebalance to pass priority context to next-week generation.
+    """
+    subject_minutes: dict[str, int] = {}
+    for day in missed_days:
+        for card in day.cards:
+            if card.subject:
+                key = card.subject.value
+                subject_minutes[key] = subject_minutes.get(key, 0) + card.planned_duration
+    return subject_minutes
+
+
 def count_frozen_ca_integrations(frozen_days: list[DailyPlan]) -> int:
     """Count CA_INTEGRATION blocks in frozen days for R21 enforcement."""
     return sum(

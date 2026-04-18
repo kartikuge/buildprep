@@ -5,11 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from preptrack.agent.exceptions import PlanGenerationError
 from preptrack.agent.planner import generate_plan
-from preptrack.agent.rebalancer import rebalance_plan
+from preptrack.agent.rebalancer import classify_days, extract_missed_context, rebalance_plan
 from preptrack.api.deps import get_storage
 from preptrack.api.schemas import (
     CheckInRequest,
     CheckInResponse,
+    GenerateAheadRequest,
+    GenerateAheadResponse,
     GeneratePlanRequest,
     OnboardRequest,
     OnboardResponse,
@@ -135,6 +137,52 @@ def generate_new_plan(
 
     storage.save_weekly_plan(plan)
     return plan.model_dump(mode="json")
+
+
+@router.post("/users/{user_id}/plan/generate-ahead", response_model=GenerateAheadResponse)
+def generate_ahead(
+    user_id: str,
+    req: GenerateAheadRequest,
+    storage: StorageBackend = Depends(get_storage),
+):
+    profile = storage.get_user_profile(user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    confidences = storage.get_topic_confidences(user_id)
+
+    today = req.debug_date or date.today()
+    current_monday = today - timedelta(days=today.weekday())
+
+    weeks_generated = []
+    weeks_skipped = []
+
+    for i in range(1, req.weeks_ahead + 1):
+        target_monday = current_monday + timedelta(weeks=i)
+        existing = storage.get_weekly_plan(user_id, target_monday)
+        if existing:
+            weeks_skipped.append(target_monday.isoformat())
+            continue
+
+        try:
+            plan = generate_plan(
+                profile=profile,
+                confidences=confidences,
+                week_start=target_monday,
+                plan_start=target_monday,
+            )
+            storage.save_weekly_plan(plan)
+            weeks_generated.append(target_monday.isoformat())
+        except PlanGenerationError as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate week {target_monday.isoformat()}: {e}",
+            )
+
+    return GenerateAheadResponse(
+        weeks_generated=weeks_generated,
+        weeks_skipped=weeks_skipped,
+    )
 
 
 @router.post("/users/{user_id}/checkin/{checkin_date}", response_model=CheckInResponse)
@@ -298,12 +346,39 @@ def rebalance(
         if d.date in recovery_date_set
     )
 
+    # Cross-week: generate next week(s) with missed context
+    next_weeks_generated: list[str] = []
+    if req.include_next_weeks > 0:
+        today = req.debug_date or date.today()
+        _, missed_days_for_context, _ = classify_days(plan, today)
+        missed_ctx = extract_missed_context(missed_days_for_context)
+
+        # Cross-week rebalance regenerates in-scope future weeks (overwrites if they
+        # exist) so missed content actually lands there. Generate Ahead still skips
+        # existing — that's additive, not a rebalance.
+        current_monday = req.week_start
+        for i in range(1, req.include_next_weeks + 1):
+            target_monday = current_monday + timedelta(weeks=i)
+            try:
+                next_plan = generate_plan(
+                    profile=profile,
+                    confidences=confidences,
+                    week_start=target_monday,
+                    plan_start=target_monday,
+                    missed_context=missed_ctx if missed_ctx else None,
+                )
+                storage.save_weekly_plan(next_plan)
+                next_weeks_generated.append(target_monday.isoformat())
+            except PlanGenerationError:
+                break  # Stop generating if one fails
+
     return RebalanceResponse(
         success=True,
         missed_dates=[d.isoformat() for d in missed_dates],
         recovery_dates=[d.isoformat() for d in recovery_dates],
         total_cards_regenerated=total_cards,
         narrative=narrative,
+        next_weeks_generated=next_weeks_generated,
     )
 
 

@@ -22,6 +22,7 @@ Stack: Strands + Amazon Nova 2 Lite (Bedrock), Nova Act, React, DynamoDB, Cognit
 - [x] Phase D (UI polish): Two-column calendar layout, 7-day grid (no scroll), reschedule in header, mark complete inline with date. CSAT added to confidence step.
 - [x] Phase E: Check-in + Confidence scoring — card-by-card Done/Partial/Skip, day finalization, deterministic confidence updates, confidence panel. 216 tests passing.
 - [x] Phase F.1: Rebalancing agent + mid-week plans + debug dates — rebalancer backend, rebalance UI, narrative/insight panel, debug date system. 237 tests passing.
+- [x] Phase G: Multi-week generation — Generate Ahead endpoint + button (current + 2 ahead cap), auto-gen on second-to-last day, cross-week rebalance with `include_next_weeks`. UX polish: scope tabs in rebalance popup, Generate Ahead counter badge + tooltip, today-anchored future-week detection.
 
 ### Remaining — Reworked Build Phases
 
@@ -191,6 +192,25 @@ Tests: 216 passing (was 193). Breakdown of new tests:
 **Rebalance eligibility fix** (`CalendarView.tsx`):
 - Bug: after a successful rebalance, the "Rebalance Week" button stayed active because finalized-skipped days (e.g. days closed by the auto-finalization) still counted as "missed" in `missedCount`.
 - Fix: `missedCount` now only counts **unfinalized** past days with no engagement. Finalized days (whether completed or all-skipped after rebalance) are considered closed — their content has already been dealt with. After a successful rebalance, `missedCount` drops to 0 and the button disables.
+
+### 2026-04-17 — Phase G: Multi-Week Generation + UX Polish
+
+**Backend** (`preptrack/api/routes.py`, `schemas.py`, `planner.py`, `prompt.py`, `rebalancer.py`):
+- `POST /users/{user_id}/plan/generate-ahead` — accepts `GenerateAheadRequest(weeks_ahead: int [1..2], debug_date)`. Loops i=1..N, generates each missing week anchored on real today's Monday (skips already-existing weeks). Returns `weeks_generated` + `weeks_skipped`.
+- `generate_plan()` gained optional `missed_context: dict[Subject, int]` — weak-area priority hint surfaced in the prompt as a "Priority Recovery" section.
+- `extract_missed_context()` helper in `rebalancer.py` — subject → total missed minutes from missed days.
+- Rebalance endpoint extended with `include_next_weeks: int = 0` on `RebalanceRequest`. When > 0, after the current-week rebalance, regenerates each in-scope future week with `missed_context` applied. **Overwrites existing future weeks** — `Generate Ahead` stays additive (skip-existing), rebalance is authoritative.
+
+**Frontend** (`CalendarView.tsx`, new `api/generateAhead.ts`, `hooks/useGenerateAhead.ts`):
+- **Generate Ahead button** — `X/2` counter badge showing how many of the 2 allowed future weeks are already scheduled; disabled with a tooltip pointing to auto-gen when full.
+- **Today-anchored lookahead** — week+1/week+2 queries derive from real today's Monday, not the currently-viewed `weekStart`. Counter and enable state stay stable as the user navigates between weeks; prevents false "available" reads when viewing a future week.
+- **Auto-generation** — `useEffect` fires on the current week's second-to-last day when next week is missing, with an inline banner.
+- **Rebalance popup — scope tabs** — `This week` / `+1 week` / `+2 weeks` as a segmented scope selector. "This week" keeps the recovery-window day slider; `+N` tabs hide the slider (semantically all remaining days are used) and show an amber callout explaining regeneration. `+N` tabs are disabled unless the corresponding future week already exists, with a tooltip pointing to Generate Ahead.
+- **Missed-day classification bug fix** — `missedCount` now mirrors backend `classify_days()`: no engagement + (past OR finalized) → missed. Previously, all-SKIPPED days the user marked complete were excluded, leaving Rebalance disabled. This re-enables rebalance for the "skip whole day, then mark complete" flow.
+
+**Docs**: new `SETUP.txt` at repo root — 3-terminal local dev (Docker DynamoDB Local, uvicorn :8080, Vite :5173) + `?debug_date=YYYY-MM-DD` usage.
+
+**Tests**: 7 rebalance API tests still passing; frontend typechecks clean. No new integration tests yet for cross-week overwrite — rebalance API tests mock `generate_plan`, so the overwrite semantics are exercised at the call-counting level but deserve a fresh integration test in the next pass.
 
 ---
 

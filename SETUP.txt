@@ -1,0 +1,46 @@
+PrepTrack — Local Dev Setup
+===========================
+
+Three terminals. Start them in this order.
+
+Terminal 1 — DynamoDB Local (Docker)
+------------------------------------
+    docker run --rm -p 8000:8000 amazon/dynamodb-local
+
+Runs on localhost:8000. Leave running.
+(First run will pull the image. Ctrl-C to stop; --rm cleans up the container.)
+
+Terminal 2 — Backend (FastAPI)
+------------------------------
+    cd /Users/kartikugemuge/kudev/buildprep
+    uvicorn preptrack.api.app:app --reload --port 8080
+
+Runs on localhost:8080. Reads DynamoDB at localhost:8000.
+Requires: Python deps installed (pip install -e . or pip install -r requirements.txt)
+and AWS creds available (env vars or ~/.aws/credentials) for Bedrock/Nova.
+
+Terminal 3 — Frontend (Vite)
+----------------------------
+    cd /Users/kartikugemuge/kudev/buildprep/frontend
+    npm run dev
+
+Opens http://localhost:5173. Talks to backend at :8080.
+
+Tests
+-----
+    pytest tests/ -v -m "not integration"
+
+Debug date (override "today")
+-----------------------------
+Append ?debug_date=YYYY-MM-DD to the frontend URL, e.g.:
+
+    http://localhost:5173/?debug_date=2026-03-12
+
+Overrides "today" across the whole stack — all components read it via
+frontend/src/lib/debug.ts (getToday / getTodayStr), and it flows into the
+onboard, generate, rebalance, and generate-ahead API calls as the
+debug_date field (used as plan_start / reference today on the backend).
+A debug badge shows in the header when active.
+
+Useful for testing mid-week onboarding, rebalancing, and day highlighting
+without waiting for real time to pass.

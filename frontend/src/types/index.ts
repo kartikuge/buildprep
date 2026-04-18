@@ -121,6 +121,7 @@ export interface RebalanceRequest {
   week_start: string
   recovery_window_days: number
   debug_date?: string | null
+  include_next_weeks?: number
 }
 
 export interface RebalanceResponse {
@@ -130,4 +131,15 @@ export interface RebalanceResponse {
   total_cards_regenerated: number
   narrative: string | null
   error: string | null
+  next_weeks_generated: string[]
+}
+
+export interface GenerateAheadRequest {
+  weeks_ahead: number
+  debug_date?: string | null
+}
+
+export interface GenerateAheadResponse {
+  weeks_generated: string[]
+  weeks_skipped: string[]
 }

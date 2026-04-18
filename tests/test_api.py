@@ -1012,3 +1012,165 @@ def test_rebalance_failure_returns_error(mock_rebalance, client, memory_storage)
     body = resp.json()
     assert body["success"] is False
     assert "All retries exhausted" in body["error"]
+
+
+# ── Generate Ahead Tests ────────────────────────────────────────────
+
+
+@patch("preptrack.api.routes.generate_plan")
+def test_generate_ahead_creates_weeks(mock_gen, client, memory_storage):
+    """Generate-ahead creates up to 2 weeks ahead, skipping existing ones."""
+    from datetime import timedelta
+
+    profile = UserProfile(
+        user_id="ahead1",
+        display_name="Ahead User",
+        stage="both",
+        prelims_date=date(2026, 5, 25),
+        mains_date=date(2026, 9, 19),
+        available_hours_per_day=6.0,
+    )
+    memory_storage.save_user_profile(profile)
+
+    # Current week plan exists
+    current_monday = date(2026, 3, 9)
+    memory_storage.save_weekly_plan(_make_fixture_plan("ahead1", current_monday))
+
+    def make_plan(**kwargs):
+        ws = kwargs.get("week_start") or kwargs.get("plan_start")
+        return _make_fixture_plan("ahead1", ws)
+
+    mock_gen.side_effect = make_plan
+
+    resp = client.post(
+        "/api/users/ahead1/plan/generate-ahead",
+        json={"weeks_ahead": 2, "debug_date": "2026-03-09"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["weeks_generated"]) == 2
+    assert body["weeks_generated"][0] == "2026-03-16"
+    assert body["weeks_generated"][1] == "2026-03-23"
+    assert body["weeks_skipped"] == []
+
+
+@patch("preptrack.api.routes.generate_plan")
+def test_generate_ahead_skips_existing(mock_gen, client, memory_storage):
+    """Generate-ahead skips weeks that already exist."""
+    profile = UserProfile(
+        user_id="ahead2",
+        display_name="Ahead User",
+        stage="both",
+        prelims_date=date(2026, 5, 25),
+        mains_date=date(2026, 9, 19),
+        available_hours_per_day=6.0,
+    )
+    memory_storage.save_user_profile(profile)
+
+    # Both current and next week exist
+    memory_storage.save_weekly_plan(_make_fixture_plan("ahead2", date(2026, 3, 9)))
+    memory_storage.save_weekly_plan(_make_fixture_plan("ahead2", date(2026, 3, 16)))
+
+    def make_plan(**kwargs):
+        ws = kwargs.get("week_start") or kwargs.get("plan_start")
+        return _make_fixture_plan("ahead2", ws)
+
+    mock_gen.side_effect = make_plan
+
+    resp = client.post(
+        "/api/users/ahead2/plan/generate-ahead",
+        json={"weeks_ahead": 2, "debug_date": "2026-03-09"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["weeks_generated"] == ["2026-03-23"]
+    assert body["weeks_skipped"] == ["2026-03-16"]
+
+
+def test_generate_ahead_user_not_found(client):
+    resp = client.post(
+        "/api/users/noone/plan/generate-ahead",
+        json={"weeks_ahead": 1},
+    )
+    assert resp.status_code == 404
+
+
+def test_generate_ahead_invalid_weeks(client, memory_storage):
+    """weeks_ahead must be 1 or 2."""
+    profile = UserProfile(
+        user_id="ahead3",
+        display_name="Ahead User",
+        stage="both",
+        available_hours_per_day=6.0,
+    )
+    memory_storage.save_user_profile(profile)
+
+    resp = client.post(
+        "/api/users/ahead3/plan/generate-ahead",
+        json={"weeks_ahead": 3},
+    )
+    assert resp.status_code == 422
+
+
+# ── Cross-Week Rebalance Tests ──────────────────────────────────────
+
+
+@patch("preptrack.api.routes.generate_plan")
+@patch("preptrack.api.routes.rebalance_plan")
+def test_rebalance_with_cross_week(mock_rebalance, mock_gen, client, memory_storage):
+    """Rebalance with include_next_weeks=1 generates the next week."""
+    profile, plan = _setup_rebalance_week(memory_storage, "xreb1")
+
+    mock_rebalance.return_value = (
+        plan,
+        [date(2026, 3, 10)],
+        [date(2026, 3, 14)],
+        "Moved History to Saturday.",
+    )
+
+    def make_plan(**kwargs):
+        ws = kwargs.get("week_start") or kwargs.get("plan_start")
+        return _make_fixture_plan("xreb1", ws)
+
+    mock_gen.side_effect = make_plan
+
+    resp = client.post(
+        "/api/users/xreb1/plan/rebalance",
+        json={
+            "week_start": "2026-03-09",
+            "recovery_window_days": 3,
+            "include_next_weeks": 1,
+            "debug_date": "2026-03-12",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["next_weeks_generated"] == ["2026-03-16"]
+
+    # Verify generate_plan was called with missed_context
+    call_kwargs = mock_gen.call_args[1]
+    assert "missed_context" in call_kwargs
+    assert call_kwargs["week_start"] == date(2026, 3, 16)
+
+
+@patch("preptrack.api.routes.rebalance_plan")
+def test_rebalance_without_cross_week(mock_rebalance, client, memory_storage):
+    """Rebalance with include_next_weeks=0 (default) generates no next weeks."""
+    profile, plan = _setup_rebalance_week(memory_storage, "xreb2")
+
+    mock_rebalance.return_value = (
+        plan,
+        [date(2026, 3, 10)],
+        [date(2026, 3, 14)],
+        "Moved History to Saturday.",
+    )
+
+    resp = client.post(
+        "/api/users/xreb2/plan/rebalance",
+        json={"week_start": "2026-03-09", "recovery_window_days": 3},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["next_weeks_generated"] == []

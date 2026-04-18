@@ -61,6 +61,7 @@ def build_plan_prompt(
     week_start: date,
     plan_dates: list[date] | None = None,
     violations: list[ValidationViolation] | None = None,
+    missed_context: dict[str, int] | None = None,
 ) -> str:
     """User prompt with all context the LLM needs to generate a WeeklyPlan."""
     available_minutes = int(profile.available_hours_per_day * 60)
@@ -118,6 +119,18 @@ def build_plan_prompt(
 - dates to generate: {', '.join(week_dates)}
 - Generate exactly {num_days} DailyPlan object{'s' if num_days > 1 else ''}, one per date listed above.
 - Apply R13 (burnout prevention) across these {num_days} days as if they are a full planning window.""")
+
+    # Priority recovery context (from cross-week rebalance)
+    if missed_context:
+        missed_lines = [
+            f"- {subj}: ~{mins}m missed" for subj, mins in sorted(missed_context.items(), key=lambda x: -x[1])
+        ]
+        sections.append(
+            "## Priority Recovery (from previous week)\n"
+            "The user fell behind on these subjects last week. Prioritize them in your plan, "
+            "but generate a NORMAL schedule that respects all constraints. Do NOT overstuff.\n"
+            + "\n".join(missed_lines)
+        )
 
     # KB context
     for section_name, content in sorted(kb_context.items()):

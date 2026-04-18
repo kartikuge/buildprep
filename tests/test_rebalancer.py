@@ -9,6 +9,7 @@ from preptrack.agent.rebalancer import (
     compute_fatigue_carryover,
     count_frozen_ca_integrations,
     extract_missed_content,
+    extract_missed_context,
 )
 from preptrack.models.enums import (
     BlockCategory,
@@ -224,3 +225,31 @@ class TestCountFrozenCA:
 
     def test_empty_frozen(self):
         assert count_frozen_ca_integrations([]) == 0
+
+
+class TestExtractMissedContext:
+    def test_aggregates_by_subject(self):
+        missed = [
+            make_daily(date(2026, 3, 10), [
+                _card(subject=Subject.HISTORY, duration=90),
+                _card(subject=Subject.ECONOMY, duration=45, order=1),
+            ]),
+            make_daily(date(2026, 3, 11), [
+                _card(subject=Subject.HISTORY, duration=60),
+            ]),
+        ]
+        ctx = extract_missed_context(missed)
+        assert ctx == {"HISTORY": 150, "ECONOMY": 45}
+
+    def test_skips_null_subjects(self):
+        missed = [
+            make_daily(date(2026, 3, 10), [
+                _card(subject=None, duration=30),
+                _card(subject=Subject.POLITY, duration=60, order=1),
+            ]),
+        ]
+        ctx = extract_missed_context(missed)
+        assert ctx == {"POLITY": 60}
+
+    def test_empty_missed(self):
+        assert extract_missed_context([]) == {}

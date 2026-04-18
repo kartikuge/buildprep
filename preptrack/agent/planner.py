@@ -245,6 +245,7 @@ def generate_plan(
     days_in_phase: int = 30,
     model_id: str = "us.amazon.nova-2-lite-v1:0",
     region: str = "us-east-1",
+    missed_context: dict[str, int] | None = None,
 ) -> WeeklyPlan:
     """Generate a validated weekly study plan.
 
@@ -316,6 +317,7 @@ def generate_plan(
             week_start=week_start,
             plan_dates=plan_dates,
             violations=violations,
+            missed_context=missed_context,
         )
 
         # Call LLM

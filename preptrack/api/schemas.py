@@ -49,6 +49,7 @@ class RebalanceRequest(BaseModel):
     week_start: date
     recovery_window_days: int = Field(ge=1, le=7)
     debug_date: date | None = None
+    include_next_weeks: int = Field(default=0, ge=0, le=2)
 
 
 class RebalanceResponse(BaseModel):
@@ -58,3 +59,14 @@ class RebalanceResponse(BaseModel):
     total_cards_regenerated: int
     narrative: str | None = None
     error: str | None = None
+    next_weeks_generated: list[str] = Field(default_factory=list)
+
+
+class GenerateAheadRequest(BaseModel):
+    weeks_ahead: int = Field(ge=1, le=2)
+    debug_date: date | None = None
+
+
+class GenerateAheadResponse(BaseModel):
+    weeks_generated: list[str]
+    weeks_skipped: list[str] = Field(default_factory=list)

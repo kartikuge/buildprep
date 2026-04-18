@@ -1,9 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { addDays, subDays, format, differenceInWeeks, parseISO } from 'date-fns'
+import { useQuery } from '@tanstack/react-query'
+import { getPlan } from '../../api/plans'
 import { usePlan } from '../../hooks/usePlan'
 import { useCheckIn } from '../../hooks/useCheckIn'
 import { useConfidence } from '../../hooks/useConfidence'
 import { useRebalance } from '../../hooks/useRebalance'
+import { useGenerateAhead } from '../../hooks/useGenerateAhead'
 import { useUserStore } from '../../store/userStore'
 import { getStudyPhase } from '../../lib/constants'
 import { getTodayStr, getDebugDate } from '../../lib/debug'
@@ -30,11 +33,15 @@ export function CalendarView() {
   const checkIn = useCheckIn()
   const { data: confidences = [] } = useConfidence(userId)
   const rebalance = useRebalance()
+  const generateAhead = useGenerateAhead()
   const [showRebalance, setShowRebalance] = useState(false)
   const [recoveryDays, setRecoveryDays] = useState(3)
+  const [includeNextWeeks, setIncludeNextWeeks] = useState(0)
   const [rebalanceError, setRebalanceError] = useState<string | null>(null)
   const [rebalanceNarrative, setRebalanceNarrative] = useState<string | null>(null)
   const [rebalanceStep, setRebalanceStep] = useState<'config' | 'confirm'>('config')
+  const [autoGenTriggered, setAutoGenTriggered] = useState<string | null>(null)
+  const [autoGenBanner, setAutoGenBanner] = useState<string | null>(null)
 
   const handlePrev = () => {
     if (!weekStart) return
@@ -109,19 +116,19 @@ export function CalendarView() {
     })
   }
 
-  // Rebalance eligibility: count missed and eligible days
-  // Missed = unfinalized past days with no engagement (content not yet dealt with)
-  // Finalized days (even all-skipped) are already closed out — don't re-rebalance
+  // Rebalance eligibility: mirrors backend classify_days()
+  // - engagement (DONE/PARTIAL on any card) → frozen, ignored here
+  // - no engagement + (past OR finalized) → missed (includes all-skipped days user marked complete)
+  // - no engagement + today/future + not finalized → eligible recovery target
   const { missedCount, eligibleCount } = useMemo(() => {
     if (!plan) return { missedCount: 0, eligibleCount: 0 }
     let missed = 0
     let eligible = 0
     for (const day of plan.days) {
-      if (day.finalized) continue
       const statuses = new Set(day.cards.map((c) => c.status))
       const hasEngagement = statuses.has('DONE') || statuses.has('PARTIAL')
       if (hasEngagement) continue
-      if (day.date < todayStr) {
+      if (day.date < todayStr || day.finalized) {
         missed++
       } else {
         eligible++
@@ -141,13 +148,18 @@ export function CalendarView() {
 
   const triggerRebalance = () => {
     if (!userId || !weekStart) return
+    // When extending into future weeks, use all eligible days in this week
+    // (the day slider is hidden in that mode — its state is semantically irrelevant).
+    const effectiveRecoveryDays =
+      includeNextWeeks > 0 ? eligibleCount : Math.min(recoveryDays, eligibleCount)
     rebalance.mutate(
       {
         userId,
         data: {
           week_start: weekStart,
-          recovery_window_days: recoveryDays,
+          recovery_window_days: effectiveRecoveryDays,
           debug_date: getDebugDate(),
+          include_next_weeks: includeNextWeeks,
         },
       },
       {
@@ -158,6 +170,7 @@ export function CalendarView() {
             setShowRebalance(false)
             setRebalanceError(null)
             setRebalanceStep('config')
+            setIncludeNextWeeks(0)
             setRebalanceNarrative(res.narrative)
           }
         },
@@ -228,6 +241,106 @@ export function CalendarView() {
     })
   }
 
+  // G.1 — Generate Ahead handler
+  const handleGenerateAhead = () => {
+    if (!userId) return
+    generateAhead.mutate(
+      {
+        userId,
+        data: {
+          weeks_ahead: 2,
+          debug_date: getDebugDate(),
+        },
+      },
+      {
+        onSuccess: (res) => {
+          const added = res.weeks_generated.length
+          if (added > 0) {
+            const nowScheduled = Math.min(futureWeeksScheduled + added, maxFutureWeeks)
+            setAutoGenBanner(
+              `Added ${added} upcoming week${added > 1 ? 's' : ''}. ${nowScheduled}/${maxFutureWeeks} future weeks scheduled.`,
+            )
+            setTimeout(() => setAutoGenBanner(null), 5000)
+          }
+        },
+      },
+    )
+  }
+
+  // G.2 — Auto-generation on second-to-last day
+  const isSecondToLastDay = useMemo(() => {
+    if (!plan) return false
+    const sortedDates = plan.days.map((d) => d.date).sort()
+    if (sortedDates.length < 2) return false
+    return todayStr === sortedDates[sortedDates.length - 2]
+  }, [plan, todayStr])
+
+  // Look ahead for already-generated future weeks (drives Generate Ahead counter + auto-gen).
+  // Anchor on real today's Monday, NOT the currently-viewed weekStart — the 2-week cap is
+  // relative to today, so the counter/enable state must stay stable as the user navigates weeks.
+  const realTodayMonday = useMemo(() => {
+    const d = new Date(todayStr + 'T00:00:00')
+    const dow = d.getDay() // 0 = Sun, 1 = Mon, ...
+    const offset = dow === 0 ? -6 : 1 - dow
+    return format(addDays(d, offset), 'yyyy-MM-dd')
+  }, [todayStr])
+
+  const weekPlus1Start = useMemo(
+    () => format(addDays(new Date(realTodayMonday + 'T00:00:00'), 7), 'yyyy-MM-dd'),
+    [realTodayMonday],
+  )
+
+  const weekPlus2Start = useMemo(
+    () => format(addDays(new Date(realTodayMonday + 'T00:00:00'), 14), 'yyyy-MM-dd'),
+    [realTodayMonday],
+  )
+
+  const { data: weekPlus1Plan } = useQuery({
+    queryKey: ['plan', userId, weekPlus1Start],
+    queryFn: () => getPlan(userId!, weekPlus1Start!),
+    enabled: !!userId && !!weekPlus1Start,
+    retry: false,
+  })
+
+  const { data: weekPlus2Plan } = useQuery({
+    queryKey: ['plan', userId, weekPlus2Start],
+    queryFn: () => getPlan(userId!, weekPlus2Start!),
+    enabled: !!userId && !!weekPlus2Start,
+    retry: false,
+  })
+
+  const futureWeeksScheduled = (weekPlus1Plan ? 1 : 0) + (weekPlus2Plan ? 1 : 0)
+  const maxFutureWeeks = 2
+  const canGenerateAhead = futureWeeksScheduled < maxFutureWeeks
+
+  useEffect(() => {
+    if (!isSecondToLastDay || !userId || weekPlus1Plan || autoGenTriggered === weekStart) return
+    setAutoGenTriggered(weekStart)
+    setAutoGenBanner('Next week is approaching — generating your schedule...')
+    generateAhead.mutate(
+      {
+        userId,
+        data: {
+          weeks_ahead: 1,
+          debug_date: getDebugDate(),
+        },
+      },
+      {
+        onSuccess: (res) => {
+          if (res.weeks_generated.length > 0) {
+            setAutoGenBanner('Next week generated!')
+            setTimeout(() => setAutoGenBanner(null), 5000)
+          } else {
+            setAutoGenBanner(null)
+          }
+        },
+        onError: () => {
+          setAutoGenBanner(null)
+        },
+      },
+    )
+  }, [isSecondToLastDay, userId, weekPlus1Plan, weekStart, autoGenTriggered])
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200">
@@ -239,6 +352,33 @@ export function CalendarView() {
               </span>
             </div>
             <div className="flex items-center gap-3">
+              <button
+                onClick={handleGenerateAhead}
+                disabled={generateAhead.isPending || !canGenerateAhead}
+                title={
+                  generateAhead.isPending
+                    ? 'Generating…'
+                    : canGenerateAhead
+                      ? `Plan your next week. Up to ${maxFutureWeeks} weeks ahead of the current week — further weeks auto-generate as you complete the current schedule, so they're shaped by your actual progress.`
+                      : `You already have the next ${maxFutureWeeks} weeks scheduled. New weeks will auto-generate as you complete this one — that way they adapt to your confidence scores and what you've missed.`
+                }
+                className={`px-3 py-1 rounded-lg border text-xs transition flex items-center gap-1.5 ${
+                  canGenerateAhead && !generateAhead.isPending
+                    ? 'border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                    : 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed'
+                }`}
+              >
+                {generateAhead.isPending ? 'Generating...' : 'Generate Ahead'}
+                <span
+                  className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                    canGenerateAhead && !generateAhead.isPending
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'bg-gray-100 text-gray-500'
+                  }`}
+                >
+                  {futureWeeksScheduled}/{maxFutureWeeks}
+                </span>
+              </button>
               <div className="relative">
                 <button
                   onClick={() => setShowRebalance(!showRebalance)}
@@ -285,26 +425,68 @@ export function CalendarView() {
                       <>
                         <p className="text-xs text-gray-500 mb-3">
                           {missedCount} missed day{missedCount !== 1 ? 's' : ''} detected.
-                          Redistribute into upcoming days.
+                          Choose how far to redistribute.
                         </p>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">
-                          Recovery window (days)
+                        <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                          Scope
                         </label>
-                        <input
-                          type="range"
-                          min={1}
-                          max={Math.min(eligibleCount, 7)}
-                          value={Math.min(recoveryDays, eligibleCount)}
-                          onChange={(e) => setRecoveryDays(Number(e.target.value))}
-                          className="w-full mb-1"
-                        />
-                        <div className="flex justify-between text-xs text-gray-400 mb-3">
-                          <span>1 day</span>
-                          <span className="font-medium text-gray-700">
-                            {Math.min(recoveryDays, eligibleCount)} day{Math.min(recoveryDays, eligibleCount) !== 1 ? 's' : ''}
-                          </span>
-                          <span>{Math.min(eligibleCount, 7)} days</span>
+                        <div className="flex gap-0.5 mb-3 p-0.5 bg-gray-100 rounded-lg">
+                          {[0, 1, 2].map((n) => {
+                            const disabled =
+                              n === 1 ? !weekPlus1Plan :
+                              n === 2 ? !(weekPlus1Plan && weekPlus2Plan) :
+                              false
+                            const label = n === 0 ? 'This week' : `+${n} week${n > 1 ? 's' : ''}`
+                            const title = disabled
+                              ? `Week +${n} isn't scheduled yet. Use Generate Ahead to add it, then rebalance.`
+                              : n === 0
+                                ? 'Rebalance only this week'
+                                : `Also regenerate the next ${n} week${n > 1 ? 's' : ''} with weak-area priority raised`
+                            return (
+                              <button
+                                key={n}
+                                onClick={() => !disabled && setIncludeNextWeeks(n)}
+                                disabled={disabled}
+                                title={title}
+                                className={`flex-1 px-2 py-1 rounded-md text-xs font-medium transition ${
+                                  includeNextWeeks === n
+                                    ? 'bg-white text-amber-700 shadow-sm'
+                                    : disabled
+                                      ? 'text-gray-300 cursor-not-allowed'
+                                      : 'text-gray-500 hover:text-gray-700'
+                                }`}
+                              >
+                                {label}
+                              </button>
+                            )
+                          })}
                         </div>
+                        {includeNextWeeks === 0 ? (
+                          <>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">
+                              Recovery window (days)
+                            </label>
+                            <input
+                              type="range"
+                              min={1}
+                              max={Math.min(eligibleCount, 7)}
+                              value={Math.min(recoveryDays, eligibleCount)}
+                              onChange={(e) => setRecoveryDays(Number(e.target.value))}
+                              className="w-full mb-1"
+                            />
+                            <div className="flex justify-between text-xs text-gray-400 mb-3">
+                              <span>1 day</span>
+                              <span className="font-medium text-gray-700">
+                                {Math.min(recoveryDays, eligibleCount)} day{Math.min(recoveryDays, eligibleCount) !== 1 ? 's' : ''}
+                              </span>
+                              <span>{Math.min(eligibleCount, 7)} days</span>
+                            </div>
+                          </>
+                        ) : (
+                          <p className="text-xs text-gray-600 mb-3 px-2.5 py-2 bg-amber-50 rounded-md border border-amber-100">
+                            Redistributes across <span className="font-medium">all {eligibleCount} remaining day{eligibleCount !== 1 ? 's' : ''}</span> this week and <span className="font-medium">regenerates the next {includeNextWeeks === 1 ? 'week' : `${includeNextWeeks} weeks`}</span> with weak-area priority raised. The existing plan for {includeNextWeeks === 1 ? 'that week' : 'those weeks'} will be replaced.
+                          </p>
+                        )}
                         {rebalanceError && (
                           <p className="text-xs text-red-600 mb-2">{rebalanceError}</p>
                         )}
@@ -392,6 +574,23 @@ export function CalendarView() {
                 width: `${(daysCompleted / Math.max(plan.days.length, 1)) * 100}%`,
               }}
             />
+          </div>
+        )}
+
+        {autoGenBanner && (
+          <div className="mb-4 px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2">
+            {generateAhead.isPending && (
+              <div className="w-4 h-4 rounded-full border-2 border-blue-300 border-t-blue-600 animate-spin" />
+            )}
+            <span className="text-sm text-blue-700">{autoGenBanner}</span>
+            {!generateAhead.isPending && (
+              <button
+                onClick={() => setAutoGenBanner(null)}
+                className="ml-auto text-blue-400 hover:text-blue-600 text-xs"
+              >
+                Dismiss
+              </button>
+            )}
           </div>
         )}
 
