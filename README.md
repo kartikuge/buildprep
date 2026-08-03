@@ -1,4 +1,4 @@
-# buildprep
+# PrepTrack
 
 **Adaptive UPSC Study Planner**
 
