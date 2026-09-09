@@ -279,6 +279,19 @@ Tests: 216 passing (was 193). Breakdown of new tests:
 **Status**: Resolved
 **Resolution**: `MemoryStorage.save_topic_confidence()` was appending blindly, creating duplicate entries per subject. Fixed to upsert by subject — scans existing list, replaces matching entry or appends if new. Verified with integration test (`test_integration_confidence_upsert_not_duplicate`).
 
+### KB Rule Definitions Spread Across Four Places
+**Status**: Deferred (tech debt)
+**Gap**: Each rule exists in four locations with no consistency check. Tracing R21: `knowledgebase/rules.md` (Condition/Action/Scope prose the LLM reads), `preptrack/kb/rules.py` (catalog entry — `rule_id`, `name`, `rule_type`, flattened `description`; drops the Scope field), `preptrack/engine/validator.py` (the actual `max 1 per week` enforcement — where the real threshold lives), and `preptrack/agent/prompt.py` (R21 prompt section + hardcoded hard-rule ID list at line 26). These aren't redundant copies; each holds something the others don't.
+
+**Severity**: Low, and stable. Nothing reads `RULES` to decide behavior — the validators are self-contained — so drift in `rules.py` is cosmetic, not correctness-affecting. Two links are genuinely fragile: (1) the hard-rule ID list in `prompt.py:26` vs. which checks `validator.py` actually enforces — telling the LLM a rule is hard when it isn't (or omitting one that is) costs avoidable rejection cycles; (2) prose numbers in the `.md` drifting from validator constants, which would surface as silent retry churn rather than a visible failure. No issues observed to date; R21/R22 and the NEWS/CA fatigue changes were applied to all locations together by hand.
+
+**Eventual enhancement** — invert the direction, don't build the original Phase B markdown parser (parsing 9KB of prose to recover numbers already typed correctly in Python is backwards). Typed source of truth, prose generated or interpolated:
+1. **Make `Rule` load-bearing** — add `scope` and an `enforced_by` marker to the model; derive `prompt.py`'s hard-rule list from `RULES` instead of hardcoding it; have each validator reference its `Rule` entry for ID and message. Removes failure mode (1). ~half a day.
+2. **Pull constants out of validator bodies** into `Rule`/`RuleParams` — R21 `max_per_week=1`, R13 fatigue carryover threshold, R09 CL/CR caps. Validators read them, prompt renders them. One number, two consumers.
+3. **Interpolate the markdown** (optional polish) — `rules.md` keeps its authored prose and rationale with parameter values substituted at `load_kb_markdown()` time rather than typed literally.
+
+**Trigger to act**: when the KB stops being one hand-maintained exam — the syllabus topic tree (too large to hand-transcribe into Python) or the multi-exam path in `PYQ_pipeline_onboarding_new_exams.md`, which plans a generated `subject_weights.json` consumed as static config. Once KB content is machine-generated per-exam, hardcoded Python registries become the wrong container and this stops being optional. Related: Phase B was never formally closed — it is done-by-substitution via the hand-structured registries in `preptrack/kb/` plus `load_kb_markdown()` for prompt context.
+
 ## Resolved
 
 - Strands SDK: `pip install strands-agents strands-agents-tools` (also needs `botocore[crt]`)
