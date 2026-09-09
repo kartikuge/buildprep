@@ -212,6 +212,20 @@ Tests: 216 passing (was 193). Breakdown of new tests:
 
 **Tests**: 7 rebalance API tests still passing; frontend typechecks clean. No new integration tests yet for cross-week overwrite — rebalance API tests mock `generate_plan`, so the overwrite semantics are exercised at the call-counting level but deserve a fresh integration test in the next pass.
 
+### 2026-07-31 — Phase G Fix: Net Missed Context (Cross-Week Rebalance)
+
+**Bug**: Cross-week rebalance passed *raw* missed content to next-week generation. It classified the **original** `plan` and extracted raw per-subject missed minutes — ignoring that the rebalancer had already re-slotted some of that content into the current week's recovery days. Result: next week over-prioritized subjects the user had already caught up on (drifting the plan toward re-teaching recovered material).
+
+**Fix** (`preptrack/api/routes.py`): compute NET missed = raw missed − minutes re-slotted into recovery days.
+- `raw_missed = extract_missed_context(missed_days)` (as before).
+- `recovered = extract_missed_context(recovery_days)` — reuses the same helper (it's just subject → minutes over any list of days) on `updated_plan`'s recovery days (`recovery_date_set` already built for card counting).
+- `missed_ctx = {subj: net for … if (net := raw − recovered) > 0}` — subjects fully caught up drop out entirely.
+- No rebalancer or signature changes; ~8 lines in the existing cross-week branch.
+
+**Design note**: When recovery days blend re-slotted missed content with normal load, we subtract all of it, so this errs toward *under*-prioritizing a heavily-recovered subject next week — the safe direction for a soft hint, and the opposite of the old double-counting bug. If next week ever visibly ignores a genuinely-still-missed subject, escalate to provenance tagging (mark which recovery cards are re-slotted vs. normal) — deferred as over-engineering for now.
+
+**Tests**: added `test_rebalance_cross_week_uses_net_missed` — 270m raw HISTORY missed, 90m re-slotted into Saturday recovery day → asserts next week receives `{"HISTORY": 180}`, not 270. Inspects the actual `missed_context` argument (not just call counts), closing the test gap flagged in the 2026-04-17 entry. **235 non-integration tests passing.**
+
 ---
 
 ## Decisions Log

@@ -346,12 +346,26 @@ def rebalance(
         if d.date in recovery_date_set
     )
 
-    # Cross-week: generate next week(s) with missed context
+    # Cross-week: generate next week(s) with NET missed context.
+    # Raw missed content over-counts: the rebalancer already re-slotted some of it
+    # into this week's recovery days. Subtract what actually landed in recovery days
+    # so next week doesn't over-prioritize subjects the user already caught up on.
     next_weeks_generated: list[str] = []
     if req.include_next_weeks > 0:
         today = req.debug_date or date.today()
         _, missed_days_for_context, _ = classify_days(plan, today)
-        missed_ctx = extract_missed_context(missed_days_for_context)
+        raw_missed = extract_missed_context(missed_days_for_context)
+
+        # extract_missed_context sums subject → minutes over any list of days; here we
+        # reuse it to measure how much of each subject was rescheduled into recovery.
+        recovery_days = [d for d in updated_plan.days if d.date in recovery_date_set]
+        recovered = extract_missed_context(recovery_days)
+
+        missed_ctx = {
+            subj: net
+            for subj, mins in raw_missed.items()
+            if (net := mins - recovered.get(subj, 0)) > 0
+        }
 
         # Cross-week rebalance regenerates in-scope future weeks (overwrites if they
         # exist) so missed content actually lands there. Generate Ahead still skips

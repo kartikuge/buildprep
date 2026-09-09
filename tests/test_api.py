@@ -1154,6 +1154,44 @@ def test_rebalance_with_cross_week(mock_rebalance, mock_gen, client, memory_stor
     assert call_kwargs["week_start"] == date(2026, 3, 16)
 
 
+@patch("preptrack.api.routes.generate_plan")
+@patch("preptrack.api.routes.rebalance_plan")
+def test_rebalance_cross_week_uses_net_missed(mock_rebalance, mock_gen, client, memory_storage):
+    """missed_context passed to next week is NET of what recovery days re-slotted.
+
+    Fixture: Mon-Wed (3 past days) are missed HISTORY at 90m each = 270m raw.
+    Recovery day Sat (2026-03-14) carries one 90m HISTORY card, so 90m is recovered.
+    Next week should therefore see 270 - 90 = 180m, not the raw 270m.
+    """
+    _setup_rebalance_week(memory_storage, "xnet1")
+
+    plan = memory_storage.get_weekly_plan("xnet1", date(2026, 3, 9))
+    mock_rebalance.return_value = (
+        plan,  # updated_plan retains the 90m HISTORY card on the Sat recovery day
+        [date(2026, 3, 9), date(2026, 3, 10), date(2026, 3, 11)],
+        [date(2026, 3, 14)],
+        "Recovered some History on Saturday.",
+    )
+    mock_gen.side_effect = lambda **kwargs: _make_fixture_plan(
+        "xnet1", kwargs.get("week_start") or kwargs.get("plan_start")
+    )
+
+    resp = client.post(
+        "/api/users/xnet1/plan/rebalance",
+        json={
+            "week_start": "2026-03-09",
+            "recovery_window_days": 3,
+            "include_next_weeks": 1,
+            "debug_date": "2026-03-12",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+
+    missed_ctx = mock_gen.call_args[1]["missed_context"]
+    assert missed_ctx == {"HISTORY": 180}  # net (270 raw − 90 recovered), not 270
+
+
 @patch("preptrack.api.routes.rebalance_plan")
 def test_rebalance_without_cross_week(mock_rebalance, client, memory_storage):
     """Rebalance with include_next_weeks=0 (default) generates no next weeks."""
